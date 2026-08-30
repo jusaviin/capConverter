@@ -13,6 +13,11 @@
     color: #1a1a1a;
     background: #fafafa;
   }
+  @media (max-width: 480px) {
+    body {
+      margin: 24px auto;
+    }
+  }
   h1 {
     font-size: 1.4rem;
     margin-bottom: 24px;
@@ -134,12 +139,10 @@
     display: none;
   }
   .top-actions {
-    position: fixed;
-    top: 20px;
-    right: 20px;
     display: flex;
+    justify-content: flex-end;
     gap: 10px;
-    z-index: 10;
+    margin-bottom: 16px;
   }
   .icon-btn {
     width: 40px;
@@ -306,6 +309,20 @@
     font-size: 0.75rem;
     text-align: right;
   }
+  footer {
+    margin-top: 40px;
+    padding-top: 16px;
+    text-align: center;
+    font-size: 0.8rem;
+    color: #888;
+  }
+  footer a {
+    color: #888;
+    text-decoration: underline;
+  }
+  footer a:hover {
+    color: #444;
+  }
 </style>
 </head>
 <body>
@@ -403,7 +420,13 @@ The full calculation:
   <details>
       <summary>I have some feedback! How can I contact you?</summary>
       <p>
-      You can find my contact information from my <a href="https://jusaviin.github.io">personal website</a>.
+      You can find my contact information from my <a href="https://jusaviin.github.io">personal website</a>. There is also a mailto link in the copyright statement at the bottom of this page.
+      </p>
+  </details>
+  <details>
+      <summary>This looks cool! Can I make something like this myself?</summary>
+      <p>
+      Sure. The source code for this web application is available at <a href="https://github.com/jusaviin/capConverter">GitHub</a> under MIT license. You can use that as a starting point, ask Claude for help, and you will have your own application running in no time!
       </p>
   </details>
 </div>
@@ -465,6 +488,11 @@ The full calculation:
     </div>
   </div>
 </div>
+
+<footer>
+  &copy; 2026 <a href="mailto:jussi.s.viinikainen@gmail.com">Jussi Viinikainen</a>. Licensed under the
+  <a href="https://github.com/jusaviin/capConverter?tab=MIT-1-ov-file" target="_blank" rel="noopener noreferrer">MIT License</a>.
+</footer>
 
 <script>
 const form = document.getElementById('cap-form');
