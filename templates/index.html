@@ -1,0 +1,751 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cap Hit Converter</title>
+<style>
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    max-width: 480px;
+    margin: 60px auto;
+    padding: 0 20px;
+    color: #1a1a1a;
+    background: #fafafa;
+  }
+  h1 {
+    font-size: 1.4rem;
+    margin-bottom: 24px;
+  }
+  #intro {
+    font-size: 0.95rem;
+    line-height: 1.5;
+    color: #444;
+    margin: -8px 0 24px;
+  }
+  h2 {
+    font-size: 1.1rem;
+    margin: 32px 0 12px;
+  }
+  .faq {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .faq details {
+    background: #fff;
+    border-radius: 8px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+    overflow: hidden;
+  }
+  .faq summary {
+    padding: 14px 16px;
+    font-weight: 600;
+    font-size: 0.95rem;
+    cursor: pointer;
+    list-style: none;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .faq summary::-webkit-details-marker {
+    display: none;
+  }
+  .faq summary::after {
+    content: '+';
+    font-weight: 400;
+    font-size: 1.2rem;
+    color: #888;
+    margin-left: 12px;
+  }
+  .faq details[open] summary::after {
+    content: '\2212';
+  }
+  .faq details p,
+  .faq details pre {
+    padding: 0 16px 16px;
+    margin: 0;
+    font-size: 0.9rem;
+    line-height: 1.5;
+    color: #444;
+  }
+  .faq details pre {
+    background: #f5f5f5;
+    padding: 12px;
+    margin: 0 16px 16px;
+    border-radius: 6px;
+    overflow-x: auto;
+    font-size: 0.85rem;
+  }
+  form {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    background: #fff;
+    padding: 24px;
+    border-radius: 10px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+  }
+  label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #444;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  input, select {
+    font-size: 1rem;
+    padding: 10px 12px;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    background: #fff;
+  }
+  button {
+    margin-top: 8px;
+    padding: 12px;
+    font-size: 1rem;
+    font-weight: 600;
+    border: none;
+    border-radius: 6px;
+    background: #2563eb;
+    color: white;
+    cursor: pointer;
+  }
+  button:hover {
+    background: #1d4ed8;
+  }
+  #result {
+    margin-top: 20px;
+    padding: 16px;
+    border-radius: 8px;
+    background: #ecfdf5;
+    border: 1px solid #a7f3d0;
+    font-size: 1.1rem;
+    display: none;
+  }
+  #error {
+    margin-top: 20px;
+    padding: 16px;
+    border-radius: 8px;
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    color: #b91c1c;
+    display: none;
+  }
+  .top-actions {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    display: flex;
+    gap: 10px;
+    z-index: 10;
+  }
+  .icon-btn {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    border: 1px solid #ddd;
+    background: #fff;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    color: #444;
+  }
+  .icon-btn svg {
+    width: 20px;
+    height: 20px;
+    display: block;
+  }
+  .icon-btn:hover {
+    background: #f3f4f6;
+  }
+  .text-icon-btn {
+    height: 40px;
+    padding: 0 16px;
+    border-radius: 20px;
+    border: 1px solid #ddd;
+    background: #fff;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+    cursor: pointer;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: #444;
+  }
+  .text-icon-btn:hover {
+    background: #f3f4f6;
+  }
+  .modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.45);
+    align-items: flex-start;
+    justify-content: center;
+    padding: 40px 20px;
+    overflow-y: auto;
+    z-index: 100;
+  }
+  .modal-overlay.open {
+    display: flex;
+  }
+  .modal {
+    background: #fff;
+    border-radius: 10px;
+    max-width: 440px;
+    width: 100%;
+    padding: 24px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+  }
+  .modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+  }
+  .modal-header h2 {
+    margin: 0;
+    font-size: 1.1rem;
+  }
+  .modal-close-btn {
+    border: none;
+    background: none;
+    font-size: 1.3rem;
+    line-height: 1;
+    cursor: pointer;
+    color: #888;
+    padding: 4px;
+  }
+  .modal-close-btn:hover {
+    color: #1a1a1a;
+  }
+  .modal-section {
+    margin-top: 20px;
+    padding-top: 16px;
+    border-top: 1px solid #eee;
+  }
+  .modal-section:first-of-type {
+    border-top: none;
+    padding-top: 0;
+  }
+  .modal-section h3 {
+    font-size: 0.9rem;
+    margin: 0 0 8px;
+  }
+  .modal-section p.hint {
+    font-size: 0.8rem;
+    color: #666;
+    margin: 0 0 12px;
+  }
+  .percentage-row {
+    display: flex;
+    gap: 8px;
+  }
+  .percentage-row input {
+    flex: 1;
+  }
+  .percentage-row button,
+  .modal-section .save-btn {
+    padding: 10px 14px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    border: none;
+    border-radius: 6px;
+    background: #2563eb;
+    color: #fff;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .percentage-row button:hover,
+  .modal-section .save-btn:hover {
+    background: #1d4ed8;
+  }
+  .cap-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+    margin-bottom: 12px;
+  }
+  .cap-table th, .cap-table td {
+    text-align: left;
+    padding: 6px 4px;
+  }
+  .cap-table th {
+    color: #666;
+    font-weight: 600;
+    border-bottom: 1px solid #eee;
+  }
+  .cap-table input {
+    width: 100%;
+    padding: 6px 8px;
+    font-size: 0.85rem;
+  }
+  .modal-section .save-btn {
+    width: 100%;
+  }
+  .modal-feedback {
+    margin-top: 10px;
+    font-size: 0.85rem;
+    display: none;
+  }
+  .modal-feedback.success {
+    color: #059669;
+  }
+  .modal-feedback.error {
+    color: #b91c1c;
+  }
+  .cap-table-scroll {
+    max-height: 55vh;
+    overflow-y: auto;
+  }
+  .cap-table td.projected-tag {
+    color: #888;
+    font-size: 0.75rem;
+    text-align: right;
+  }
+</style>
+</head>
+<body>
+
+<div class="top-actions">
+  <button class="text-icon-btn" id="cap-table-btn" title="View full salary cap table" aria-label="View full salary cap table">Cap</button>
+  <button class="icon-btn" id="settings-btn" title="Salary cap projection settings" aria-label="Salary cap projection settings">
+    <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z" stroke="currentColor" stroke-width="1.8"/>
+      <path d="M19.4 13.5a1.7 1.7 0 0 0 .34 1.87l.06.06a2.05 2.05 0 1 1-2.9 2.9l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1.03 1.56V20a2.05 2.05 0 1 1-4.1 0v-.09a1.7 1.7 0 0 0-1.11-1.56 1.7 1.7 0 0 0-1.87.34l-.06.06a2.05 2.05 0 1 1-2.9-2.9l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.56-1.03H4a2.05 2.05 0 1 1 0-4.1h.09a1.7 1.7 0 0 0 1.56-1.11 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2.05 2.05 0 1 1 2.9-2.9l.06.06a1.7 1.7 0 0 0 1.87.34H10.15a1.7 1.7 0 0 0 1.03-1.56V4a2.05 2.05 0 1 1 4.1 0v.09a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.87-.34l.06-.06a2.05 2.05 0 1 1 2.9 2.9l-.06.06a1.7 1.7 0 0 0-.34 1.87v.09a1.7 1.7 0 0 0 1.56 1.03H20a2.05 2.05 0 1 1 0 4.1h-.09a1.7 1.7 0 0 0-1.56 1.03Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+    </svg>
+  </button>
+</div>
+
+<h1>Salary Cap Hit Converter</h1>
+
+<p id="intro">
+  This tool converts a player's salary cap hit into what it would be if it had started in a chosen reference season and the average cap hit percentage stayed the same.
+</p>
+
+<form id="cap-form">
+  <label>
+    Salary Cap Hit (M$)
+    <input type="number" id="cap_hit" step="0.01" min="0" required>
+  </label>
+  <label>
+    Number of Seasons
+    <select id="num_years" required></select>
+  </label>
+  <label>
+    Contract Start Season
+    <select id="contract_start_year" required></select>
+  </label>
+  <label>
+    Reference Contract Start Season
+    <select id="reference_start_year" required></select>
+  </label>
+  <button type="submit">Convert</button>
+</form>
+
+<div id="result"></div>
+<div id="error"></div>
+
+<h2>FAQ</h2>
+<div class="faq">
+  <details>
+    <summary>Can you provide an example calculation?</summary>
+    <p>
+      Certainly. The tool first calculates the average cap hit percentage for the duration of the original contract. It then calculates the amount of money the player would earn if the contract would have started in the reference year assuming the player would earn the same average fraction of the cap hit throughout the contract period.
+    </p>
+    <pre>
+Cap hit:                 5.0 M$
+Number of seasons:       3
+Contract start season:   2020-2021
+Reference start season:  2025-2026
+
+Cap ceilings for the relevant seasons:
+2020-2021 = 81.5 M$
+2021-2022 = 81.5 M$
+2022-2023 = 82.5 M$
+2025-2026 = 95.5 M$
+2026-2027 = 104 M$
+2027-2028 = 113.5 M$
+
+The full calculation:
+   (5 / 81.5) + (5 / 81.5) + (5 / 82.5) =
+   (x / 95.5) + (x / 104) + (x / 113.5)
+=> (x / 95.5) + (x / 104) + (x / 113.5) = 0.1833
+=> (104 * 113.5 * x) / (95.5 * 104 * 113.5)
+ + (95.5 * 113.5 * x) / (95.5 * 104 * 113.5)
+ + (95.5 * 104 * x) / (95.5 * 104 * 113.5) = 0.1833
+=> (104 * 113.5 * x) + (95.5 * 113.5 * x)
+ + (95.5 * 104 * x) = (95.5 * 104 * 113.5) * 0.1833
+=> 32575.250 x = 206636.93
+=> x ~= 6.34 M$</pre>
+  </details>
+  <details>
+      <summary>Where do you find the salary cap information?</summary>
+      <p>
+      The historical salary cap information is available in <a href=https://en.wikipedia.org/wiki/NHL_salary_cap>Wikipedia</a>. <a href=https://www.nhl.com/news/nhl-nhlpa-announce-team-payroll-ranges-for-next-3-seasons-through-2027-28>The NHL has announced</a> the salary cap for the next couple of seasons. All the rest is a projection based on my best guess.
+      </p>
+  </details>
+  <details>
+    <summary>How are future cap hits projected?</summary>
+    <p>
+      I have only NHL confirmed data until 2027-2028 season. After that, I am assuming 9% yearly increase in the salary cap. This is based on recent cap increases since the 2024-2025 season. The increaes have been 8.52%, 8.90%, and 9.13% in each consecutive season since then. It seems reasonable to me to assume the salary cap continues to increase about 9% per season also in the future.
+    </p>
+  </details>
+  <details>
+    <summary>I want a different projection! How can I change this?</summary>
+    <p>
+      There is a gear icon to open settings in the top right corner. This allows you to set your own percentage increase per season, or alternatively just edit the future cap hits by hand to whatever you want them to be!
+    </p>
+  </details>
+  <details>
+      <summary>I have some feedback! How can I contact you?</summary>
+      <p>
+      You can find my contact information from my <a href="https://jusaviin.github.io">personal website</a>.
+      </p>
+  </details>
+</div>
+
+<div class="modal-overlay" id="settings-overlay">
+  <div class="modal">
+    <div class="modal-header">
+      <h2>Projected Salary Cap Settings</h2>
+      <button class="modal-close-btn" id="settings-close-btn" aria-label="Close">&times;</button>
+    </div>
+
+    <div class="modal-section">
+      <h3>Apply a fixed yearly increase</h3>
+      <p class="hint" id="percentage-hint">
+        Recalculates every projected year using this percentage increase
+        over the previous year. This overwrites any manual edits below.
+      </p>
+      <div class="percentage-row">
+        <input type="number" id="percentage-input" step="0.01" placeholder="e.g. 9">
+        <button type="button" id="apply-percentage-btn">Apply</button>
+      </div>
+    </div>
+
+    <div class="modal-section">
+      <h3>Or edit individual years</h3>
+      <p class="hint" id="manual-hint">
+        Values are in M$.
+      </p>
+      <table class="cap-table" id="cap-table">
+        <thead>
+          <tr><th>Season</th><th>Cap (M$)</th></tr>
+        </thead>
+        <tbody id="cap-table-body"></tbody>
+      </table>
+      <button type="button" class="save-btn" id="save-manual-btn">Save changes</button>
+    </div>
+
+    <div class="modal-feedback" id="modal-feedback"></div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="captable-overlay">
+  <div class="modal">
+    <div class="modal-header">
+      <h2>Full Salary Cap Table</h2>
+      <button class="modal-close-btn" id="captable-close-btn" aria-label="Close">&times;</button>
+    </div>
+    <p class="hint">
+      Values are in M$. Rows marked "projected" come from the
+      projection settings and can be changed there.
+    </p>
+    <div class="cap-table-scroll">
+      <table class="cap-table" id="full-cap-table">
+        <thead>
+          <tr><th>Season</th><th>Cap (M$)</th><th>YoY %</th><th></th></tr>
+        </thead>
+        <tbody id="full-cap-table-body"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+const form = document.getElementById('cap-form');
+const resultBox = document.getElementById('result');
+const errorBox = document.getElementById('error');
+
+const settingsBtn = document.getElementById('settings-btn');
+const settingsOverlay = document.getElementById('settings-overlay');
+const settingsCloseBtn = document.getElementById('settings-close-btn');
+const percentageInput = document.getElementById('percentage-input');
+const applyPercentageBtn = document.getElementById('apply-percentage-btn');
+const capTableBody = document.getElementById('cap-table-body');
+const saveManualBtn = document.getElementById('save-manual-btn');
+const modalFeedback = document.getElementById('modal-feedback');
+
+const capTableBtn = document.getElementById('cap-table-btn');
+const captableOverlay = document.getElementById('captable-overlay');
+const captableCloseBtn = document.getElementById('captable-close-btn');
+const fullCapTableBody = document.getElementById('full-cap-table-body');
+
+// Client-side in-memory state for custom cap overrides (in millions)
+let currentOverrides = {};
+
+function populateSelect(id, min, max, defaultValue, formatLabel) {
+  const select = document.getElementById(id);
+  select.innerHTML = '';
+  for (let v = min; v <= max; v++) {
+    const option = document.createElement('option');
+    // The value sent to the backend is always the plain year/count --
+    // formatLabel only changes what's shown in the dropdown.
+    option.value = v;
+    option.textContent = formatLabel ? formatLabel(v) : v;
+    select.appendChild(option);
+  }
+  if (defaultValue !== undefined && defaultValue >= min && defaultValue <= max) {
+    select.value = defaultValue;
+  }
+}
+
+// Displays a start year as a season range, e.g. 2020 -> "2020-2021".
+// Only used for season-start dropdowns -- num_years stays a plain count.
+const seasonLabel = (year) => `${year}-${year + 1}`;
+
+function formatNumber(value, decimals = 2) {
+  const fixed = Number(value).toFixed(decimals);
+  const [intPartRaw, decPart] = fixed.split('.');
+  const negative = intPartRaw.startsWith('-');
+  const intPart = negative ? intPartRaw.slice(1) : intPartRaw;
+  const withSpaces = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+  const sign = negative ? '-' : '';
+  return decPart !== undefined ? `${sign}${withSpaces}.${decPart}` : `${sign}${withSpaces}`;
+}
+
+let editableStart = null;
+let editableEnd = null;
+
+function renderCapTable(payload) {
+  editableStart = payload.editable_start;
+  editableEnd = payload.editable_end;
+
+  const years = Object.keys(payload.table)
+    .map(Number)
+    .filter((year) => year >= editableStart && year <= editableEnd)
+    .sort((a, b) => a - b);
+
+  capTableBody.innerHTML = '';
+
+  years.forEach((year) => {
+    // Priority: use in-memory override if set, otherwise use table default value
+    const value = currentOverrides[year] !== undefined ? currentOverrides[year] : payload.table[String(year)];
+    const row = document.createElement('tr');
+
+    const yearCell = document.createElement('td');
+    yearCell.textContent = `${year}-${year + 1}`;
+    row.appendChild(yearCell);
+
+    const valueCell = document.createElement('td');
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.step = '0.01';
+    input.min = '0';
+    input.dataset.year = year;
+    input.value = value;
+    valueCell.appendChild(input);
+    row.appendChild(valueCell);
+
+    capTableBody.appendChild(row);
+  });
+}
+
+function showModalFeedback(message, isError) {
+  modalFeedback.textContent = message;
+  modalFeedback.className = 'modal-feedback ' + (isError ? 'error' : 'success');
+  modalFeedback.style.display = 'block';
+}
+
+async function loadSalaryCapTable() {
+  const res = await fetch('/api/salary-cap');
+  const data = await res.json();
+
+  renderCapTable(data);
+
+  const years = Object.keys(data.table).map(Number);
+  const minYear = Math.min(...years);
+  const maxStartYear = data.editable_start - 1;
+
+  const contractSelect = document.getElementById('contract_start_year');
+  const referenceSelect = document.getElementById('reference_start_year');
+
+  const currentContractYear = contractSelect.value ? Number(contractSelect.value) : 2026;
+  const currentReferenceYear = referenceSelect.value ? Number(referenceSelect.value) : 2020;
+
+  populateSelect('contract_start_year', minYear, maxStartYear, currentContractYear, seasonLabel);
+  populateSelect('reference_start_year', minYear, maxStartYear, currentReferenceYear, seasonLabel);
+
+  return data;
+}
+
+populateSelect('num_years', 1, 8, 5);
+loadSalaryCapTable();
+
+function renderFullCapTable(payload) {
+  const years = Object.keys(payload.table).map(Number).sort((a, b) => a - b);
+  const yearsSet = new Set(years);
+  fullCapTableBody.innerHTML = '';
+
+  // Resolves a year's cap value the same way everywhere: in-memory
+  // override first (so YoY % reflects any custom projection/manual
+  // edits), falling back to the server-provided default.
+  const getValue = (year) =>
+    currentOverrides[year] !== undefined ? currentOverrides[year] : payload.table[String(year)];
+
+  years.forEach((year) => {
+    const value = getValue(year);
+    const isProjected = year >= payload.editable_start && year <= payload.editable_end;
+    const row = document.createElement('tr');
+
+    const yearCell = document.createElement('td');
+    yearCell.textContent = `${year}-${year + 1}`;
+    row.appendChild(yearCell);
+
+    const valueCell = document.createElement('td');
+    valueCell.textContent = formatNumber(value);
+    row.appendChild(valueCell);
+
+    // Empty for the first season (2005-2006) since there's no prior
+    // year to compare against.
+    const yoyCell = document.createElement('td');
+    if (yearsSet.has(year - 1)) {
+      const prevValue = getValue(year - 1);
+      const pctChange = ((value - prevValue) / prevValue) * 100;
+      const sign = pctChange >= 0 ? '+' : '';
+      yoyCell.textContent = `${sign}${formatNumber(pctChange)}%`;
+    }
+    row.appendChild(yoyCell);
+
+    const tagCell = document.createElement('td');
+    tagCell.className = 'projected-tag';
+    tagCell.textContent = isProjected ? 'projected' : '';
+    row.appendChild(tagCell);
+
+    fullCapTableBody.appendChild(row);
+  });
+}
+
+capTableBtn.addEventListener('click', async () => {
+  captableOverlay.classList.add('open');
+  const res = await fetch('/api/salary-cap');
+  const data = await res.json();
+  renderFullCapTable(data);
+});
+
+captableCloseBtn.addEventListener('click', () => {
+  captableOverlay.classList.remove('open');
+});
+
+captableOverlay.addEventListener('click', (e) => {
+  if (e.target === captableOverlay) {
+    captableOverlay.classList.remove('open');
+  }
+});
+
+settingsBtn.addEventListener('click', () => {
+  modalFeedback.style.display = 'none';
+  settingsOverlay.classList.add('open');
+  loadSalaryCapTable();
+});
+
+settingsCloseBtn.addEventListener('click', () => {
+  settingsOverlay.classList.remove('open');
+});
+
+settingsOverlay.addEventListener('click', (e) => {
+  if (e.target === settingsOverlay) {
+    settingsOverlay.classList.remove('open');
+  }
+});
+
+applyPercentageBtn.addEventListener('click', async () => {
+  modalFeedback.style.display = 'none';
+  const percentage = parseFloat(percentageInput.value);
+
+  if (Number.isNaN(percentage)) {
+    showModalFeedback('Enter a percentage value first.', true);
+    return;
+  }
+
+  try {
+    const res = await fetch('/api/salary-cap/percentage', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ percentage }),
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+      throw new Error(data.error || 'Something went wrong.');
+    }
+
+    // Save newly calculated projected years into client memory state
+    currentOverrides = {};
+    for (let year = data.editable_start; year <= data.editable_end; year++) {
+      currentOverrides[year] = data.table[String(year)];
+    }
+
+    renderCapTable(data);
+    showModalFeedback(
+      `Projected years ${data.editable_start}-${data.editable_end} updated using ${percentage}% growth.`,
+      false
+    );
+  } catch (err) {
+    showModalFeedback(err.message, true);
+  }
+});
+
+saveManualBtn.addEventListener('click', () => {
+  modalFeedback.style.display = 'none';
+
+  const inputs = capTableBody.querySelectorAll('input[data-year]');
+  inputs.forEach((input) => {
+    currentOverrides[input.dataset.year] = parseFloat(input.value);
+  });
+
+  showModalFeedback('Manual cap values saved.', false);
+});
+
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  resultBox.style.display = 'none';
+  errorBox.style.display = 'none';
+
+  const capHitMillions = parseFloat(document.getElementById('cap_hit').value);
+  const payload = {
+    cap_hit: capHitMillions * 1_000_000,
+    num_years: document.getElementById('num_years').value,
+    contract_start_year: document.getElementById('contract_start_year').value,
+    reference_start_year: document.getElementById('reference_start_year').value,
+    overrides: currentOverrides // Pass local memory state directly with payload
+  };
+
+  try {
+    const res = await fetch('/api/convert', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+      throw new Error(data.error || 'Something went wrong.');
+    }
+
+    const convertedMillions = data.converted_cap_hit / 1_000_000;
+    resultBox.textContent = `Converted Cap Hit: ${formatNumber(convertedMillions)} M$`;
+    resultBox.style.display = 'block';
+  } catch (err) {
+    errorBox.textContent = err.message;
+    errorBox.style.display = 'block';
+  }
+});
+</script>
+
+</body>
+</html>
