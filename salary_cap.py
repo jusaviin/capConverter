@@ -1,51 +1,62 @@
 #!/Users/jviinika/code/nhl/nhlEnvironment/bin/python3
 
+import os
+import psycopg2
+from dotenv import dotenv_values
+
+
 class salary_cap_finder():
 
     def __init__(self, overrides=None):
-        
-        # Known and projected salary cap values
-        self.salary_cap = {
-        # Known salary cap values
-            2005: 39000000,
-            2006: 44000000,
-            2007: 50300000,
-            2008: 56700000,
-            2009: 56800000,
-            2010: 59400000,
-            2011: 64300000,
-            2012: 70200000,
-            2013: 64300000,
-            2014: 69000000,
-            2015: 71400000,
-            2016: 73000000,
-            2017: 75000000,
-            2018: 79500000,
-            2019: 81500000,
-            2020: 81500000,
-            2021: 81500000,
-            2022: 82500000,
-            2023: 83500000,
-            2024: 88000000,
-            2025: 95500000,
-            2026: 104000000,
-            2027: 113500000,
-        # Projected salary cap, filled in the class method below
-            2028: 0,
-            2029: 0,
-            2030: 0,
-            2031: 0,
-            2032: 0,
-            2033: 0,
-            2034: 0,
-            2035: 0
-        }
-        
-        self.first_projected = 2028
-        self.last_projected = 2035
-        
+
+        # Known salary cap values now come from the seasons table in
+        # Postgres instead of being hard-coded. POSTGRES_URL is read
+        # via python-dotenv: dotenv_values() reads the local .env file
+        # directly (no need for the app entry point to call
+        # load_dotenv() first), and real process environment variables
+        # are merged in on top -- so on Render, where there's no .env
+        # file at all, the variable set in Render's dashboard is still
+        # found correctly.
+        config = {**dotenv_values(), **os.environ}
+        postgres_url = config.get("POSTGRES_URL")
+        if not postgres_url:
+            raise RuntimeError(
+                "POSTGRES_URL is not set. Define it in your .env file "
+                "(locally) or as an environment variable (in production)."
+            )
+
+        self.salary_cap = {}
+
+        conn = psycopg2.connect(postgres_url, connect_timeout=5)
+        try:
+            cur = conn.cursor()
+            # Only non-null salary_cap values count as "known" --
+            # a season row can exist (e.g. for cap_floor tracking)
+            # without a confirmed cap yet.
+            cur.execute(
+                "SELECT season, salary_cap FROM seasons "
+                "WHERE salary_cap IS NOT NULL ORDER BY season"
+            )
+            for season, salary_cap in cur.fetchall():
+                self.salary_cap[season] = salary_cap
+        finally:
+            conn.close()
+
+        if not self.salary_cap:
+            raise RuntimeError(
+                "No known (non-null) salary_cap values found in the "
+                "seasons table."
+            )
+
+        # Projected years pick up right where the known data ends,
+        # covering the same 8-season window (first_projected through
+        # first_projected+7) as before.
+        known_max_season = max(self.salary_cap)
+        self.first_projected = known_max_season + 1
+        self.last_projected = self.first_projected + 7
+
         self.project_percentage(9)
-        
+
         if overrides:
             self.apply_overrides(overrides)
 
