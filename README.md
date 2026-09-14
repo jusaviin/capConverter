@@ -9,7 +9,7 @@ To test things locally, you will first need to create the production environment
 ```
 python3 -m venv capConverterEnvironment
 source capConverterEnvironment/bin/activate
-pip install -r requirements.txt
+pip install -e ".[all]"
 ```
 
 ## Setting up local test database
@@ -60,6 +60,14 @@ If you ran these commands from the terminal, the username and password default t
 5. Fill the database
 
 I am eventually combining this project with https://github.com/jusaviin/nhlAnalyzer. I am just using the database created with that project but converted from SQLite to PostgreSQL. Check the other project for now for instructions on how to fill the database.
+
+6. Enable searching without accents
+
+I try to use accented names for all players as consistently as I can. To facilitate searching from database, it is good to use the unaccent extension in PostgreSQL. You can enable it with
+
+```
+psql -d nhldb -c "CREATE EXTENSION IF NOT EXISTS unaccent;"
+```
 
 ## Running the app
 

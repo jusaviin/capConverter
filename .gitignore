@@ -1,7 +1,9 @@
 # Ignote python cache and local testing environment
 __pycache__
+*.egg-info/
 capConverterEnvironment
 .env
+todo.txt
 
 # The docker image is used test things locally. We do not need this on server
 docker-compose-postgres.yml

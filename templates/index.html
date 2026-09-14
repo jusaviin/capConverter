@@ -320,6 +320,158 @@
   footer a:hover {
     color: #444;
   }
+  .autofill-section {
+    background: #fff;
+    padding: 20px;
+    border-radius: 10px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+    margin-bottom: 20px;
+  }
+  .autofill-section h2 {
+    font-size: 1rem;
+    margin: 0 0 12px;
+  }
+  .autofill-search-row {
+    display: flex;
+    gap: 8px;
+  }
+  .autofill-search-row input {
+    flex: 1;
+    font-size: 1rem;
+    padding: 10px 12px;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+  }
+  .autofill-search-row button {
+    padding: 10px 16px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    border: none;
+    border-radius: 6px;
+    background: #2563eb;
+    color: #fff;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .autofill-search-row button:hover {
+    background: #1d4ed8;
+  }
+  .autofill-list {
+    margin-top: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .autofill-list-item {
+    text-align: left;
+    padding: 10px 12px;
+    border: 1px solid #e5e5e5;
+    border-radius: 6px;
+    background: #fafafa;
+    cursor: pointer;
+    font-size: 0.9rem;
+  }
+  .autofill-list-item:hover {
+    background: #eef2ff;
+    border-color: #c7d2fe;
+  }
+  .autofill-list-item .primary {
+    font-weight: 600;
+    color: #1a1a1a;
+  }
+  .autofill-list-item .secondary {
+    color: #666;
+    font-size: 0.8rem;
+    margin-top: 2px;
+  }
+  .autofill-back-btn {
+    background: none;
+    border: none;
+    color: #2563eb;
+    font-size: 0.85rem;
+    cursor: pointer;
+    padding: 0;
+    margin-top: 10px;
+  }
+  .autofill-selected-player {
+    font-size: 1rem;
+    font-weight: 600;
+    margin: 12px 0 4px;
+  }
+  .autofill-hint {
+    font-size: 0.85rem;
+    color: #888;
+    margin-top: 8px;
+  }
+  .autofill-warning {
+    font-size: 0.85rem;
+    color: #b91c1c;
+    margin-top: 8px;
+    display: none;
+  }
+  .data-disclaimer {
+    font-size: 0.75rem;
+    color: #999;
+    margin-top: 10px;
+  }
+  .comparables-section {
+    background: #fff;
+    padding: 20px;
+    border-radius: 10px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+    margin-top: 20px;
+  }
+  .comparables-section h2 {
+    font-size: 1rem;
+    margin: 0 0 12px;
+  }
+  .comparables-tabs {
+    display: flex;
+    gap: 4px;
+    background: #f3f4f6;
+    border-radius: 8px;
+    padding: 4px;
+    margin-bottom: 12px;
+  }
+  .comparables-tab {
+    flex: 1;
+    padding: 8px 10px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: #666;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .comparables-tab.active {
+    background: #fff;
+    color: #1a1a1a;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  }
+  .comparables-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .comparable-item {
+    padding: 10px 12px;
+    border: 1px solid #e5e5e5;
+    border-radius: 6px;
+    background: #fafafa;
+    font-size: 0.9rem;
+  }
+  .comparable-item .primary {
+    font-weight: 600;
+    color: #1a1a1a;
+    display: flex;
+    justify-content: space-between;
+  }
+  .comparable-item .secondary {
+    color: #666;
+    font-size: 0.8rem;
+    margin-top: 2px;
+  }
 </style>
 </head>
 <body>
@@ -335,10 +487,31 @@
   This tool converts an NHL player's salary cap hit into what it would be if the contract had started in a chosen reference season and the average cap hit percentage stayed the same.
 </p>
 
+<div class="autofill-section">
+  <h2>Autofill from a real contract</h2>
+
+  <div id="autofill-search-view">
+    <div class="autofill-search-row">
+      <input type="text" id="player-search-input" placeholder="Search for a player (e.g. McDavid)">
+      <button type="button" id="player-search-btn">Search</button>
+    </div>
+    <div class="autofill-list" id="player-results-list"></div>
+    <p class="autofill-hint" id="player-search-hint"></p>
+  </div>
+
+  <div id="autofill-contracts-view" style="display: none;">
+    <button type="button" class="autofill-back-btn" id="autofill-back-btn">&larr; Back to search</button>
+    <p class="autofill-selected-player" id="autofill-selected-player"></p>
+    <div class="autofill-list" id="contract-results-list"></div>
+    <p class="autofill-warning" id="autofill-warning"></p>
+    <p class="data-disclaimer">Contract data provided by <a href="https://capwages.com">CapWages</a></p>
+  </div>
+</div>
+
 <form id="cap-form">
   <label>
     Salary Cap Hit (M$)
-    <input type="number" id="cap_hit" step="0.01" min="0" required>
+    <input type="number" id="cap_hit" step="any" min="0" required>
   </label>
   <label>
     Number of Seasons
@@ -357,6 +530,16 @@
 
 <div id="result"></div>
 <div id="error"></div>
+
+<div class="comparables-section" id="comparables-section" style="display: none;">
+  <h2>Comparable cap hits that season</h2>
+  <div class="comparables-tabs">
+    <button type="button" class="comparables-tab active" id="tab-all-season" data-mode="all_season">Under contract that season</button>
+    <button type="button" class="comparables-tab" id="tab-avg-cap-percentage" data-mode="avg_cap_percentage">Average cap percentage</button>
+  </div>
+  <div class="comparables-list" id="comparables-list"></div>
+  <p class="data-disclaimer">Contract data provided by <a href="https://capwages.com">CapWages</a></p>
+</div>
 
 <h2>FAQ</h2>
 <div class="faq">
@@ -395,6 +578,12 @@ The full calculation:
       <summary>Where do you find the salary cap information?</summary>
       <p>
       The historical salary cap information is available in <a href=https://en.wikipedia.org/wiki/NHL_salary_cap>Wikipedia</a>. <a href=https://www.nhl.com/news/nhl-nhlpa-announce-team-payroll-ranges-for-next-3-seasons-through-2027-28>The NHL has announced</a> the salary cap for the next couple of seasons. All the rest is a projection based on my best guess.
+      </p>
+  </details>
+  <details>
+      <summary>Where do you get the player contract details?</summary>
+      <p>
+      The contract data is provided by <a href="https://capwages.com">CapWages</a>. I read all the contract data presented in this site from their API. If you want to get API access yourself, check their <a href="https://capwages.com/pro">membership options</a>.
       </p>
   </details>
   <details>
@@ -528,6 +717,30 @@ function populateSelect(id, min, max, defaultValue, formatLabel) {
 // Only used for season-start dropdowns -- num_years stays a plain count.
 const seasonLabel = (year) => `${year}-${year + 1}`;
 
+// Maximum legal contract length depends on when the contract starts:
+//   - 2020 or later: 8 years
+//   - 2013 through 2019 (inclusive): 12 years
+//   - before 2013: 24 years
+// A reference season is really a hypothetical contract of the same
+// length starting then, so this same rule constrains it too.
+function maxYearsForStart(year) {
+  if (year >= 2020) return 8;
+  if (year >= 2013) return 12;
+  return 24;
+}
+
+// The latest start year (capped at maxStartYear) that can still
+// legally host a contract of the given length.
+function latestAllowedStartYear(numYears, maxStartYear) {
+  let latest = maxStartYear;
+  if (numYears > 12) {
+    latest = Math.min(latest, 2012);
+  } else if (numYears > 8) {
+    latest = Math.min(latest, 2019);
+  }
+  return latest;
+}
+
 function formatNumber(value, decimals = 2) {
   const fixed = Number(value).toFixed(decimals);
   const [intPartRaw, decPart] = fixed.split('.');
@@ -581,6 +794,47 @@ function showModalFeedback(message, isError) {
   modalFeedback.style.display = 'block';
 }
 
+let knownMaxStartYear = null;
+let knownMinYear = null;
+
+// Keeps the contract-start and reference-start dropdowns limited to
+// years that can legally host a contract of `numYears` seasons.
+// Trusts numYears as authoritative (it was either picked directly
+// from an already-constrained dropdown, or came from a real,
+// already-legal contract via autofill) and reverts either start year
+// down to the latest season the length allows if it's currently too
+// recent.
+function constrainStartYearsToLength(numYears) {
+  const latestAllowed = latestAllowedStartYear(numYears, knownMaxStartYear);
+  const contractSelect = document.getElementById('contract_start_year');
+  const referenceSelect = document.getElementById('reference_start_year');
+
+  let contractYear = Number(contractSelect.value);
+  let referenceYear = Number(referenceSelect.value);
+  if (contractYear > latestAllowed) contractYear = latestAllowed;
+  if (referenceYear > latestAllowed) referenceYear = latestAllowed;
+
+  populateSelect('contract_start_year', knownMinYear, latestAllowed, contractYear, seasonLabel);
+  populateSelect('reference_start_year', knownMinYear, latestAllowed, referenceYear, seasonLabel);
+}
+
+// Called when either start-year dropdown changes. Re-derives the
+// maximum contract length the current combination of start years can
+// support, clamps num_years down if it no longer fits, then re-opens
+// the start-year dropdowns for the (possibly now shorter) length.
+function constrainLengthToStartYears() {
+  const numYearsSelect = document.getElementById('num_years');
+  const contractYear = Number(document.getElementById('contract_start_year').value);
+  const referenceYear = Number(document.getElementById('reference_start_year').value);
+
+  let numYears = Number(numYearsSelect.value);
+  const cap = Math.min(maxYearsForStart(contractYear), maxYearsForStart(referenceYear));
+  if (numYears > cap) numYears = cap;
+  populateSelect('num_years', 1, cap, numYears);
+
+  constrainStartYearsToLength(numYears);
+}
+
 async function loadSalaryCapTable() {
   const res = await fetch('/api/salary-cap');
   const data = await res.json();
@@ -590,6 +844,8 @@ async function loadSalaryCapTable() {
   const years = Object.keys(data.table).map(Number);
   const minYear = Math.min(...years);
   const maxStartYear = data.editable_start - 1;
+  knownMaxStartYear = maxStartYear;
+  knownMinYear = minYear;
 
   const contractSelect = document.getElementById('contract_start_year');
   const referenceSelect = document.getElementById('reference_start_year');
@@ -600,11 +856,168 @@ async function loadSalaryCapTable() {
   populateSelect('contract_start_year', minYear, maxStartYear, currentContractYear, seasonLabel);
   populateSelect('reference_start_year', minYear, maxStartYear, currentReferenceYear, seasonLabel);
 
+  // Now that real bounds are known, tighten num_years and both
+  // start-year dropdowns so no forbidden combination is selectable.
+  constrainLengthToStartYears();
+
   return data;
 }
 
-populateSelect('num_years', 1, 8, 5);
+populateSelect('num_years', 1, 24, 5);
 loadSalaryCapTable();
+
+// --- Player search / contract autofill ---
+
+const playerSearchInput = document.getElementById('player-search-input');
+const playerSearchBtn = document.getElementById('player-search-btn');
+const playerResultsList = document.getElementById('player-results-list');
+const playerSearchHint = document.getElementById('player-search-hint');
+const autofillSearchView = document.getElementById('autofill-search-view');
+const autofillContractsView = document.getElementById('autofill-contracts-view');
+const contractResultsList = document.getElementById('contract-results-list');
+const autofillBackBtn = document.getElementById('autofill-back-btn');
+const autofillSelectedPlayer = document.getElementById('autofill-selected-player');
+const autofillWarning = document.getElementById('autofill-warning');
+
+let searchRequestId = 0;
+
+async function searchPlayers() {
+  const query = playerSearchInput.value.trim();
+  const requestId = ++searchRequestId;
+  playerResultsList.innerHTML = '';
+  playerSearchHint.textContent = '';
+
+  if (query.length < 2) {
+    playerSearchHint.textContent = 'Type at least 2 characters to search.';
+    return;
+  }
+
+  const res = await fetch(`/api/players/search?q=${encodeURIComponent(query)}`);
+  const data = await res.json();
+
+  // While typing, an earlier (slower) request can resolve after a
+  // later (faster) one. If that's happened, this response is stale
+  // -- drop it instead of overwriting the newer, correct results.
+  if (requestId !== searchRequestId) {
+    return;
+  }
+
+  if (data.players.length === 0) {
+    playerSearchHint.textContent = 'No players found.';
+    return;
+  }
+
+  data.players.forEach((player) => {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.className = 'autofill-list-item';
+    item.innerHTML = `
+      <div class="primary">${player.first_name} ${player.last_name}</div>
+      <div class="secondary">${player.team ? `${player.team} &middot; ` : ''}${player.position || 'Unknown position'}</div>
+    `;
+    item.addEventListener('click', () => showPlayerContracts(player));
+    playerResultsList.appendChild(item);
+  });
+}
+
+async function showPlayerContracts(player) {
+  autofillWarning.style.display = 'none';
+  contractResultsList.innerHTML = '';
+  const teamAndPosition = [player.team, player.position].filter(Boolean).join(' \u00b7 ');
+  autofillSelectedPlayer.textContent = `${player.first_name} ${player.last_name}${teamAndPosition ? ` (${teamAndPosition})` : ''}`;
+
+  const res = await fetch(`/api/players/${player.id}/contracts`);
+  const data = await res.json();
+
+  if (data.contracts.length === 0) {
+    contractResultsList.innerHTML = '<p class="autofill-hint">No usable contracts found for this player.</p>';
+  } else {
+    data.contracts.forEach((contract) => {
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'autofill-list-item';
+      item.innerHTML = `
+        <div class="primary">${seasonLabel(contract.start_season)} to ${seasonLabel(contract.end_season)} (${contract.num_years} season${contract.num_years === 1 ? '' : 's'})</div>
+        <div class="secondary">${contract.type}${contract.team ? ` &middot; ${contract.team}` : ''} &middot; ${formatNumber(contract.cap_hit_millions)} M$ cap hit</div>
+      `;
+      item.addEventListener('click', () => applyContractAutofill(contract));
+      contractResultsList.appendChild(item);
+    });
+  }
+
+  autofillSearchView.style.display = 'none';
+  autofillContractsView.style.display = 'block';
+}
+
+let selectedContractId = null;
+    
+// Reset selectedContractId if user manually edits input fields
+document.getElementById('cap_hit').addEventListener('input', () => { selectedContractId = null; });
+document.getElementById('num_years').addEventListener('change', () => {
+  selectedContractId = null;
+  constrainStartYearsToLength(Number(document.getElementById('num_years').value));
+});
+document.getElementById('contract_start_year').addEventListener('change', () => {
+  selectedContractId = null;
+  constrainLengthToStartYears();
+});
+document.getElementById('reference_start_year').addEventListener('change', () => {
+  constrainLengthToStartYears();
+});
+    
+function applyContractAutofill(contract) {
+  autofillWarning.style.display = 'none';
+        
+  if (knownMaxStartYear !== null && contract.start_season > knownMaxStartYear) {
+    autofillWarning.textContent = `Can't autofill this contract: the start season ${seasonLabel(contract.start_season)} is beyond the calculator's confirmed range.`;
+    autofillWarning.style.display = 'block';
+    return;
+  }
+        
+  selectedContractId = contract.id;
+  document.getElementById('cap_hit').value = contract.cap_hit_millions;
+
+  // This is a real, already-legal contract, so its own length and
+  // start season are trusted as-is -- widen their dropdowns to fit
+  // before selecting the values.
+  const contractCap = maxYearsForStart(contract.start_season);
+  populateSelect('num_years', 1, contractCap, contract.num_years);
+  populateSelect('contract_start_year', knownMinYear, knownMaxStartYear, contract.start_season, seasonLabel);
+
+  // Now bring the reference season (and everything else) in line with
+  // this contract's length, reverting it to the latest season the
+  // length allows if it's currently too recent.
+  constrainStartYearsToLength(contract.num_years);
+        
+  document.getElementById('cap-form').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// Debounce so a live-typing search doesn't fire a request on every
+// single keystroke -- waits until the user pauses briefly before
+// actually searching.
+function debounce(fn, delayMs) {
+  let timeoutId;
+  return (...args) => {
+    clearTimeout(timeoutId);
+    timeoutId = setTimeout(() => fn(...args), delayMs);
+  };
+}
+
+const debouncedSearchPlayers = debounce(searchPlayers, 300);
+
+playerSearchBtn.addEventListener('click', searchPlayers);
+playerSearchInput.addEventListener('input', debouncedSearchPlayers);
+playerSearchInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    searchPlayers();
+  }
+});
+
+autofillBackBtn.addEventListener('click', () => {
+  autofillContractsView.style.display = 'none';
+  autofillSearchView.style.display = 'block';
+});
 
 function renderFullCapTable(payload) {
   const years = Object.keys(payload.table).map(Number).sort((a, b) => a - b);
@@ -635,9 +1048,9 @@ function renderFullCapTable(payload) {
     const yoyCell = document.createElement('td');
     if (yearsSet.has(year - 1)) {
       const prevValue = getValue(year - 1);
-      const pctChange = ((value - prevValue) / prevValue) * 100;
-      const sign = pctChange >= 0 ? '+' : '';
-      yoyCell.textContent = `${sign}${formatNumber(pctChange)}%`;
+      const percentageChange = ((value - prevValue) / prevValue) * 100;
+      const sign = percentageChange >= 0 ? '+' : '';
+      yoyCell.textContent = `${sign}${formatNumber(percentageChange)}%`;
     }
     row.appendChild(yoyCell);
 
@@ -731,20 +1144,87 @@ saveManualBtn.addEventListener('click', () => {
   showModalFeedback('Manual cap values saved.', false);
 });
 
+// --- Comparable cap hits ---
+
+let comparablesData = null;
+let activeComparablesTab = 'all_season';
+
+async function loadComparableContracts(season, capHitMillions, contractStartYear, numYears, originalCapHit, excludeContractId) {
+  const overridesParam = encodeURIComponent(JSON.stringify(currentOverrides));
+  let url = `/api/comparable-contracts?season=${season}&cap_hit=${capHitMillions}&contract_start_year=${contractStartYear}&num_years=${numYears}&original_cap_hit=${originalCapHit}&overrides=${overridesParam}`;
+  if (excludeContractId) {
+    url += `&exclude_contract_id=${excludeContractId}`;
+  }
+    
+  const res = await fetch(url);
+  if (!res.ok) return;
+    
+  comparablesData = await res.json();
+  renderComparables();
+  document.getElementById('comparables-section').style.display = 'block';
+}
+    
+function renderComparables() {
+  const list = document.getElementById('comparables-list');
+  list.innerHTML = '';
+        
+  const rows = comparablesData ? comparablesData[activeComparablesTab] : [];
+  if (!rows || rows.length === 0) {
+    list.innerHTML = '<p class="autofill-hint">No comparable contracts found for that season.</p>';
+    return;
+  }
+        
+  rows.forEach((row) => {
+    const item = document.createElement('div');
+    item.className = 'comparable-item';
+    const displayValue = activeComparablesTab === 'avg_cap_percentage'
+    ? `${formatNumber(row.avg_cap_percentage)} %`
+    : `${formatNumber(row.cap_hit_millions)} M$`;
+            
+    item.innerHTML = `
+      <div class="primary">
+        <span>${row.player_name}</span>
+        <span>${displayValue}</span>
+      </div>
+      <div class="secondary">${row.team ? `${row.team} &middot; ` : ''}${row.type} &middot; ${seasonLabel(row.start_season)} to ${seasonLabel(row.end_season)}</div>
+    `;
+    list.appendChild(item);
+  });
+}
+    
+document.getElementById('tab-all-season').addEventListener('click', () => {
+  activeComparablesTab = 'all_season';
+  document.getElementById('tab-all-season').classList.add('active');
+  document.getElementById('tab-avg-cap-percentage').classList.remove('active');
+  renderComparables();
+});
+    
+document.getElementById('tab-avg-cap-percentage').addEventListener('click', () => {
+  activeComparablesTab = 'avg_cap_percentage';
+  document.getElementById('tab-avg-cap-percentage').classList.add('active');
+  document.getElementById('tab-all-season').classList.remove('active');
+  renderComparables();
+});
+    
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
   resultBox.style.display = 'none';
   errorBox.style.display = 'none';
-
+  document.getElementById('comparables-section').style.display = 'none';
+        
   const capHitMillions = parseFloat(document.getElementById('cap_hit').value);
+  const numYears = parseInt(document.getElementById('num_years').value, 10);
+  const contractStartYear = parseInt(document.getElementById('contract_start_year').value, 10);
+  const referenceYear = Number(document.getElementById('reference_start_year').value);
+        
   const payload = {
     cap_hit: capHitMillions * 1_000_000,
-    num_years: document.getElementById('num_years').value,
-    contract_start_year: document.getElementById('contract_start_year').value,
-    reference_start_year: document.getElementById('reference_start_year').value,
-    overrides: currentOverrides // Pass local memory state directly with payload
+    num_years: numYears,
+    contract_start_year: contractStartYear,
+    reference_start_year: referenceYear,
+    overrides: currentOverrides
   };
-
+        
   try {
     const res = await fetch('/api/convert', {
       method: 'POST',
@@ -752,14 +1232,26 @@ form.addEventListener('submit', async (e) => {
       body: JSON.stringify(payload),
     });
     const data = await res.json();
-
+            
     if (!res.ok) {
       throw new Error(data.error || 'Something went wrong.');
     }
-
+            
     const convertedMillions = data.converted_cap_hit / 1_000_000;
-    resultBox.textContent = `Converted Cap Hit: ${formatNumber(convertedMillions)} M$`;
+    resultBox.innerHTML = `
+      <div><strong>Converted Cap Hit:</strong> ${formatNumber(convertedMillions)} M$</div>
+      <div style="margin-top: 4px; font-size: 0.95rem; color: #047857;"><strong>Average Cap Hit:</strong> ${formatNumber(data.average_cap_percentage)} %</div>
+    `;
     resultBox.style.display = 'block';
+    
+    await loadComparableContracts(
+      referenceYear,
+      convertedMillions,
+      contractStartYear,
+      numYears,
+      capHitMillions,
+      selectedContractId
+    );
   } catch (err) {
     errorBox.textContent = err.message;
     errorBox.style.display = 'block';

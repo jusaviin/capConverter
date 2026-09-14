@@ -1,33 +1,19 @@
 #!/Users/jviinika/code/nhl/nhlEnvironment/bin/python3
 
-import os
-import psycopg2
-from dotenv import dotenv_values
+from database_helper import get_connection
 
 
 class salary_cap_finder():
 
     def __init__(self, overrides=None):
 
-        # Known salary cap values now come from the seasons table in
-        # Postgres instead of being hard-coded. POSTGRES_URL is read
-        # via python-dotenv: dotenv_values() reads the local .env file
-        # directly (no need for the app entry point to call
-        # load_dotenv() first), and real process environment variables
-        # are merged in on top -- so on Render, where there's no .env
-        # file at all, the variable set in Render's dashboard is still
-        # found correctly.
-        config = {**dotenv_values(), **os.environ}
-        postgres_url = config.get("POSTGRES_URL")
-        if not postgres_url:
-            raise RuntimeError(
-                "POSTGRES_URL is not set. Define it in your .env file "
-                "(locally) or as an environment variable (in production)."
-            )
-
+        # Known salary cap values come from the seasons table in
+        # Postgres instead of being hard-coded. Connection details
+        # (POSTGRES_URL, timeout, etc.) all live in database_helper.py
+        # now -- this class doesn't need to know any of that itself.
         self.salary_cap = {}
 
-        conn = psycopg2.connect(postgres_url, connect_timeout=5)
+        conn = get_connection()
         try:
             cur = conn.cursor()
             # Only non-null salary_cap values count as "known" --

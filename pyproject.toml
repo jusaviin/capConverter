@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nhl-cap-converter"
+version = "0.1.0"
+description = "NHL cap hit converter and related database tooling"
+requires-python = ">=3.9"
+dependencies = [
+    "Flask==3.0.3",
+    "gunicorn==23.0.0",
+    "psycopg2-binary==2.9.12",
+    "python-dotenv==1.2.3",
+]
+
+[tool.setuptools]
+py-modules = ["database_helper"]
+
+[tool.setuptools.packages.find]
+include = ["database_management*"]
+
+[project.optional-dependencies]
+jupyter = [
+    "jupysql==0.11.1",
+    "jupyter==1.1.1",
+]
+db-management = [
+    "nhl-api-py",
+    "geopy",
+    "country_converter"
+]
+all = [
+    "nhl-cap-converter[jupyter,db-management]",
+]
