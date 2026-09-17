@@ -1,11 +1,73 @@
 import json
 import os
+import uuid
+from datetime import datetime, timezone
 
 from flask import Flask, render_template, request, jsonify
 from salary_cap import salary_cap_finder
 from database_helper import get_connection
 
 app = Flask(__name__)
+
+# --- Visitor logging -------------------------------------------------
+
+def log_visit():
+    """
+    Insert one row per page load into the (separate, unrelated-to-the-
+    hockey-data) page_visits table, tagged with a fresh session id so
+    later actions in the same tab (e.g. clicking Convert) can be tied
+    back to this visit. Never lets a logging failure break the actual
+    page render. Returns the session id either way -- if the insert
+    failed, the page still renders, it just won't have a matching
+    visit row to join against.
+    """
+    session_id = str(uuid.uuid4())
+
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO page_visits (visited_at, session_id) VALUES (%s, %s)",
+            (datetime.now(timezone.utc), session_id),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        app.logger.exception("Failed to log page visit")
+    finally:
+        conn.close()
+
+    return session_id
+
+
+def log_conversion(session_id):
+    """
+    Records one click of the Convert button, tagged with the session
+    id the page was rendered with (sent back explicitly in the
+    request body -- see index.html). No cookie involved: nothing is
+    stored by the browser, the id just lives in the page's own JS for
+    as long as the tab is open and gets included with this one
+    request. If it's missing or blank -- e.g. the API is called
+    directly rather than through the page -- session_id is stored as
+    NULL. Never lets a logging failure affect the actual conversion
+    result.
+    """
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO conversion_events (converted_at, session_id)
+            VALUES (%s, %s)
+            """,
+            (datetime.now(timezone.utc), session_id),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        app.logger.exception("Failed to log conversion event")
+    finally:
+        conn.close()
 
 
 def get_max_contract_years(start_season):
@@ -142,7 +204,11 @@ def set_salary_cap_percentage():
 
 @app.route("/")
 def index():
-    return render_template("index.html")
+    session_id = log_visit()
+    # No cookie: session_id is rendered straight into the page's own
+    # JS (see index.html) and only ever leaves the browser again if
+    # the Convert button is clicked, as part of that one request body.
+    return render_template("index.html", session_id=session_id)
 
 
 @app.route("/api/players/search", methods=["GET"])
@@ -433,6 +499,10 @@ def convert():
         if len(overrides) > 8:
             return jsonify({"error": "Too many override entries."}), 400
         parsed_overrides = {int(k): float(v) * 1_000_000 for k, v in overrides.items()}
+        # Optional: whatever session_id the page was rendered with.
+        # Not trusted for anything beyond analytics -- just tagged onto
+        # the conversion_events row as-is, blank/missing is fine.
+        session_id = data.get("session_id") or None
     except (KeyError, ValueError, TypeError):
         return jsonify({"error": "Invalid or missing input values."}), 400
 
@@ -483,6 +553,7 @@ def convert():
     result, average_cap_percentage = convert_cap_hit(
         cap_hit, num_years, contract_start_year, reference_start_year, cap_finder
     )
+    log_conversion(session_id)
     return jsonify({
         "converted_cap_hit": round(result, 2),
         "average_cap_percentage": round(average_cap_percentage, 2),

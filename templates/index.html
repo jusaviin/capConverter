@@ -676,6 +676,13 @@ The full calculation:
 </footer>
 
 <script>
+// Set server-side on each page load, purely so the /api/convert call
+// below can be attributed to this particular page load for the
+// visitor-count/conversion stats. Not a cookie: it isn't stored by
+// the browser, isn't sent on every request, and disappears the
+// moment this tab is closed or reloaded.
+const VISIT_SESSION_ID = {{ session_id | tojson }};
+
 const form = document.getElementById('cap-form');
 const resultBox = document.getElementById('result');
 const errorBox = document.getElementById('error');
@@ -1222,7 +1229,8 @@ form.addEventListener('submit', async (e) => {
     num_years: numYears,
     contract_start_year: contractStartYear,
     reference_start_year: referenceYear,
-    overrides: currentOverrides
+    overrides: currentOverrides,
+    session_id: VISIT_SESSION_ID
   };
         
   try {
