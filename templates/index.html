@@ -449,6 +449,32 @@
     color: #1a1a1a;
     box-shadow: 0 1px 3px rgba(0,0,0,0.1);
   }
+  .comparables-filter-tabs {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+  .comparable-filter-btn {
+    flex: 1;
+    padding: 6px 10px;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    background: #f9fafb;
+    color: #374151;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    margin-top: 0;
+    transition: all 0.15s ease;
+  }
+  .comparable-filter-btn:hover {
+    background: #f3f4f6;
+  }
+  .comparable-filter-btn.active {
+    background: #2563eb;
+    color: #ffffff;
+    border-color: #2563eb;
+  }
   .comparables-list {
     display: flex;
     flex-direction: column;
@@ -536,6 +562,11 @@
   <div class="comparables-tabs">
     <button type="button" class="comparables-tab active" id="tab-all-season" data-mode="all_season">Under contract that season</button>
     <button type="button" class="comparables-tab" id="tab-avg-cap-percentage" data-mode="avg_cap_percentage">Average cap percentage</button>
+  </div>
+  <div class="comparables-filter-tabs">
+    <button type="button" class="comparable-filter-btn" id="filter-forwards" data-pos="forwards">Forwards</button>
+    <button type="button" class="comparable-filter-btn" id="filter-defenders" data-pos="defenders">Defenders</button>
+    <button type="button" class="comparable-filter-btn" id="filter-goalies" data-pos="goalies">Goalies</button>
   </div>
   <div class="comparables-list" id="comparables-list"></div>
   <p class="data-disclaimer">Contract data provided by <a href="https://capwages.com">CapWages</a></p>
@@ -947,7 +978,7 @@ async function showPlayerContracts(player) {
         <div class="primary">${seasonLabel(contract.start_season)} to ${seasonLabel(contract.end_season)} (${contract.num_years} season${contract.num_years === 1 ? '' : 's'})</div>
         <div class="secondary">${contract.type}${contract.team ? ` &middot; ${contract.team}` : ''} &middot; ${formatNumber(contract.cap_hit_millions)} M$ cap hit</div>
       `;
-      item.addEventListener('click', () => applyContractAutofill(contract));
+      item.addEventListener('click', () => applyContractAutofill(contract, player.position));
       contractResultsList.appendChild(item);
     });
   }
@@ -957,22 +988,28 @@ async function showPlayerContracts(player) {
 }
 
 let selectedContractId = null;
+let selectedContractPosition = null;
     
 // Reset selectedContractId if user manually edits input fields
-document.getElementById('cap_hit').addEventListener('input', () => { selectedContractId = null; });
+document.getElementById('cap_hit').addEventListener('input', () => { 
+  selectedContractId = null; 
+  selectedContractPosition = null; 
+});
 document.getElementById('num_years').addEventListener('change', () => {
   selectedContractId = null;
+  selectedContractPosition = null;
   constrainStartYearsToLength(Number(document.getElementById('num_years').value));
 });
 document.getElementById('contract_start_year').addEventListener('change', () => {
   selectedContractId = null;
+  selectedContractPosition = null;
   constrainLengthToStartYears();
 });
 document.getElementById('reference_start_year').addEventListener('change', () => {
   constrainLengthToStartYears();
 });
     
-function applyContractAutofill(contract) {
+function applyContractAutofill(contract, playerPosition) {
   autofillWarning.style.display = 'none';
         
   if (knownMaxStartYear !== null && contract.start_season > knownMaxStartYear) {
@@ -982,6 +1019,7 @@ function applyContractAutofill(contract) {
   }
         
   selectedContractId = contract.id;
+  selectedContractPosition = playerPosition;
   document.getElementById('cap_hit').value = contract.cap_hit_millions;
 
   // This is a real, already-legal contract, so its own length and
@@ -1155,12 +1193,60 @@ saveManualBtn.addEventListener('click', () => {
 
 let comparablesData = null;
 let activeComparablesTab = 'all_season';
+let activePositionFilter = null;
+let lastComparableParams = null;
+
+function getPositionCategory(pos) {
+  if (!pos) return null;
+  const p = pos.toUpperCase().trim();
+  if (['C', 'R', 'L'].includes(p)) return 'forwards';
+  if (p === 'D') return 'defenders';
+  if (p === 'G') return 'goalies';
+  return null;
+}
+
+function updatePositionFilterButtons() {
+  const btnForwards = document.getElementById('filter-forwards');
+  const btnDefenders = document.getElementById('filter-defenders');
+  const btnGoalies = document.getElementById('filter-goalies');
+
+  btnForwards.classList.toggle('active', activePositionFilter === 'forwards');
+  btnDefenders.classList.toggle('active', activePositionFilter === 'defenders');
+  btnGoalies.classList.toggle('active', activePositionFilter === 'goalies');
+}
+
+function handlePositionFilterClick(category) {
+  if (activePositionFilter === category) {
+    activePositionFilter = null;
+  } else {
+    activePositionFilter = category;
+  }
+  updatePositionFilterButtons();
+
+  if (lastComparableParams) {
+    loadComparableContracts(
+      lastComparableParams.season,
+      lastComparableParams.capHitMillions,
+      lastComparableParams.contractStartYear,
+      lastComparableParams.numYears,
+      lastComparableParams.originalCapHit,
+      lastComparableParams.excludeContractId
+    );
+  }
+}
+
+document.getElementById('filter-forwards').addEventListener('click', () => handlePositionFilterClick('forwards'));
+document.getElementById('filter-defenders').addEventListener('click', () => handlePositionFilterClick('defenders'));
+document.getElementById('filter-goalies').addEventListener('click', () => handlePositionFilterClick('goalies'));
 
 async function loadComparableContracts(season, capHitMillions, contractStartYear, numYears, originalCapHit, excludeContractId) {
   const overridesParam = encodeURIComponent(JSON.stringify(currentOverrides));
   let url = `/api/comparable-contracts?season=${season}&cap_hit=${capHitMillions}&contract_start_year=${contractStartYear}&num_years=${numYears}&original_cap_hit=${originalCapHit}&overrides=${overridesParam}`;
   if (excludeContractId) {
     url += `&exclude_contract_id=${excludeContractId}`;
+  }
+  if (activePositionFilter) {
+    url += `&position_group=${encodeURIComponent(activePositionFilter)}`;
   }
     
   const res = await fetch(url);
@@ -1172,6 +1258,8 @@ async function loadComparableContracts(season, capHitMillions, contractStartYear
 }
     
 function renderComparables() {
+  updatePositionFilterButtons();
+
   const list = document.getElementById('comparables-list');
   list.innerHTML = '';
         
@@ -1190,7 +1278,7 @@ function renderComparables() {
             
     item.innerHTML = `
       <div class="primary">
-        <span>${row.player_name}</span>
+        <span>${row.player_name}${row.position ? ` &middot; ${row.position}` : ''}</span>
         <span>${displayValue}</span>
       </div>
       <div class="secondary">${row.team ? `${row.team} &middot; ` : ''}${row.type} &middot; ${seasonLabel(row.start_season)} to ${seasonLabel(row.end_season)}</div>
@@ -1251,6 +1339,21 @@ form.addEventListener('submit', async (e) => {
       <div style="margin-top: 4px; font-size: 0.95rem; color: #047857;"><strong>Average Cap Hit:</strong> ${formatNumber(data.average_cap_percentage)} %</div>
     `;
     resultBox.style.display = 'block';
+
+    if (selectedContractId !== null && selectedContractPosition) {
+      activePositionFilter = getPositionCategory(selectedContractPosition);
+    } else {
+      activePositionFilter = null;
+    }
+
+    lastComparableParams = {
+      season: referenceYear,
+      capHitMillions: convertedMillions,
+      contractStartYear,
+      numYears,
+      originalCapHit: capHitMillions,
+      excludeContractId: selectedContractId
+    };
     
     await loadComparableContracts(
       referenceYear,

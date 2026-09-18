@@ -335,6 +335,15 @@ def get_comparable_contracts():
     exclude_contract_id = request.args.get("exclude_contract_id", type=int)
     exclude_clause = " AND c.id != %(exclude_contract_id)s" if exclude_contract_id else ""
 
+    position_group = request.args.get("position_group")
+    position_clause = ""
+    if position_group == "forwards":
+        position_clause = " AND p.position IN ('C', 'R', 'L')"
+    elif position_group == "defenders":
+        position_clause = " AND p.position = 'D'"
+    elif position_group == "goalies":
+        position_clause = " AND p.position = 'G'"
+
     # Parse custom overrides sent from frontend
     overrides_raw = request.args.get("overrides")
     parsed_overrides = {}
@@ -376,7 +385,7 @@ def get_comparable_contracts():
         # Fetch closest 10 by cap hit distance
         cur.execute(
             f"""
-            SELECT p.first_name, p.last_name, c.cap_hit, c.start_season, c.end_season, c.type,
+            SELECT p.first_name, p.last_name, p.position, c.cap_hit, c.start_season, c.end_season, c.type,
                    c.signing_team AS team
             FROM contracts c
             JOIN players p ON p.id = c.player_id
@@ -385,6 +394,7 @@ def get_comparable_contracts():
               AND c.end_season IS NOT NULL
               AND c.start_season <= %(season)s AND c.end_season >= %(season)s
               {exclude_clause}
+              {position_clause}
             ORDER BY ABS(c.cap_hit - %(target)s) ASC
             LIMIT 10
             """,
@@ -397,11 +407,11 @@ def get_comparable_contracts():
         all_rows = cur.fetchall()
 
         # Re-sort the selected 10 by cap hit magnitude (largest to smallest)
-        all_rows = sorted(all_rows, key=lambda row: row[2], reverse=True)
+        all_rows = sorted(all_rows, key=lambda row: row[3], reverse=True)
 
         cur.execute(
             f"""
-            SELECT p.first_name, p.last_name, c.cap_hit, c.start_season, c.end_season, c.type,
+            SELECT p.first_name, p.last_name, p.position, c.cap_hit, c.start_season, c.end_season, c.type,
                    c.signing_team AS team
             FROM contracts c
             JOIN players p ON p.id = c.player_id
@@ -410,6 +420,7 @@ def get_comparable_contracts():
               AND c.end_season IS NOT NULL
               AND c.start_season <= %(season)s AND c.end_season >= %(season)s
               {exclude_clause}
+              {position_clause}
             """,
             {
                 "season": season,
@@ -421,7 +432,7 @@ def get_comparable_contracts():
         conn.close()
 
     formatted_avg_percentage_rows = []
-    for first_name, last_name, cap_hit, start_season, end_season, contract_type, team in candidates:
+    for first_name, last_name, position, cap_hit, start_season, end_season, contract_type, team in candidates:
         duration = end_season - start_season + 1
         if duration <= 0:
             continue
@@ -443,6 +454,7 @@ def get_comparable_contracts():
 
         formatted_avg_percentage_rows.append({
             "player_name": f"{first_name} {last_name}",
+            "position": position,
             "cap_hit_millions": round(cap_hit / 1_000_000, 4),
             "avg_cap_percentage": round(c_avg_cap_percentage, 2),
             "start_season": start_season,
@@ -466,13 +478,14 @@ def get_comparable_contracts():
         return [
             {
                 "player_name": f"{first_name} {last_name}",
+                "position": position,
                 "cap_hit_millions": round(cap_hit / 1_000_000, 4),
                 "start_season": start_season,
                 "end_season": end_season,
                 "type": contract_type,
                 "team": team,
             }
-            for first_name, last_name, cap_hit, start_season, end_season, contract_type, team in rows
+            for first_name, last_name, position, cap_hit, start_season, end_season, contract_type, team in rows
         ]
 
     return jsonify({
