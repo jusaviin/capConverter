@@ -1,109 +1,15 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="map-page">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>NHL Team &amp; Roster Map</title>
-{% from '_nav.html' import nav_styles, site_nav %}
+{% from '_nav.html' import nav_styles, site_nav, site_footer %}
 {{ nav_styles() }}
 
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.css">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.Default.css">
-
-<style>
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    max-width: 1000px;
-    margin: 60px auto;
-    padding: 0 20px;
-    color: #1a1a1a;
-    background: #fafafa;
-  }
-  @media (max-width: 600px) {
-    body { margin: 24px auto; }
-  }
-  h1 {
-    font-size: 1.4rem;
-    margin-bottom: 24px;
-  }
-  #intro {
-    font-size: 0.95rem;
-    line-height: 1.5;
-    color: #444;
-    margin: -8px 0 24px;
-    max-width: 640px;
-  }
-  .controls {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: flex-end;
-    gap: 16px;
-    background: #fff;
-    padding: 16px 20px;
-    border-radius: 10px;
-    box-shadow: 0 1px 4px rgba(0,0,0,0.08);
-    margin-bottom: 16px;
-  }
-  .mode-toggle {
-    display: flex;
-    border: 1px solid #ccc;
-    border-radius: 6px;
-    overflow: hidden;
-  }
-  .mode-toggle button {
-    margin: 0;
-    padding: 10px 16px;
-    font-size: 0.95rem;
-    font-weight: 600;
-    border: none;
-    border-radius: 0;
-    background: #fff;
-    color: #444;
-    cursor: pointer;
-  }
-  .mode-toggle button:hover { background: #f3f4f6; }
-  .mode-toggle button.active {
-    background: #2563eb;
-    color: #fff;
-  }
-  label {
-    font-size: 0.85rem;
-    font-weight: 600;
-    color: #444;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-  select {
-    font-size: 1rem;
-    padding: 10px 12px;
-    border: 1px solid #ccc;
-    border-radius: 6px;
-    background: #fff;
-    min-width: 150px;
-  }
-  select:disabled { background: #f3f4f6; color: #888; }
-  #team-label[hidden] { display: none; }
-
-  #status {
-    font-size: 0.9rem;
-    color: #444;
-    min-height: 1.3em;
-    margin: 0 0 10px;
-  }
-  #status.error { color: #b91c1c; }
-
-  #map {
-    height: 65vh;
-    min-height: 380px;
-    border-radius: 10px;
-    box-shadow: 0 1px 4px rgba(0,0,0,0.08);
-    background: #e5e7eb;
-  }
-  .popup-title { font-weight: 600; margin-bottom: 4px; }
-  .popup-players { margin: 0; padding-left: 18px; }
-</style>
 </head>
 <body>
 
@@ -113,8 +19,8 @@
 
 <h1>NHL Team &amp; Roster Map</h1>
 
-<p id="intro">
-  See where NHL teams play, or where a team's players were born. Pick a season to map every team, or pick a team as well to map its roster's hometowns.
+<p id="intro" class="map-intro">
+  See where NHL teams play, or where a team's players were born. The map automatically updates every time you make a selection.
 </p>
 
 <div class="controls">
@@ -136,6 +42,36 @@
 
 <p id="status" role="status"></p>
 <div id="map"></div>
+
+<h2>FAQ</h2>
+<div class="faq">
+    <details>
+        <summary>Who do you include in a team roster?</summary>
+        <p>
+        A player gets included in a roster if he has played in at least 1 game in the selected season. If a player has played in several teams within a season, he is only included in the roster of the team he ended the season with.
+        </p>
+    </details>
+    <details>
+        <summary>Where do you get player birth city information?</summary>
+        <p>
+        This information is provided by NHL API. The unofficial reference on how to use it can be found from <a href="https://github.com/Zmalski/NHL-API-Reference"> here</a>. If you are using Python, you can use <a href="https://pypi.org/project/nhl-api-py/">nhl-api-py package</a> to interact with the API.
+        </p>
+    </details>
+    <details>
+        <summary>How do you place cities on the map?</summary>
+        <p>
+        After I get the birth city from NHL API, I use Nominatim from geopy.geocoders to find longitude and latitude for the city. These values are then used to place a blue marker on the map.
+        </p>
+    </details>
+    <details>
+        <summary>How about team logos?</summary>
+        <p>
+        The team logos are placed at the location of their stadium. The list of stadiums can be found on <a href="https://en.wikipedia.org/wiki/List_of_National_Hockey_League_arenas">Wikipedia</a>. These stadiums are then geolocated with Nominatim to place the logo in the correct spot.
+        </p>
+    </details>
+</div>
+
+{{ site_footer() }}
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.js"></script>

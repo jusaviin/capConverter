@@ -15,48 +15,20 @@
 ] %}
 
 {% macro nav_styles() %}
-<style>
-  .site-nav {
-    display: flex;
-    gap: 22px;
-    align-items: center;
-    flex-wrap: wrap;
-  }
-  .site-nav a {
-    padding: 8px 0 6px;
-    font-size: 0.95rem;
-    font-weight: 600;
-    color: #6b7280;
-    text-decoration: none;
-    border-bottom: 2px solid transparent;
-  }
-  .site-nav a:hover {
-    color: #1a1a1a;
-  }
-  .site-nav a[aria-current="page"] {
-    color: #1a1a1a;
-    border-bottom-color: #2563eb;
-  }
-  .site-nav a:focus-visible {
-    outline: 2px solid #2563eb;
-    outline-offset: 3px;
-    border-radius: 2px;
-  }
-  /* Nav on the left, page-specific buttons (if any) on the right */
-  .top-bar {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 12px;
-    margin-bottom: 20px;
-  }
-</style>
+<link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
 {% endmacro %}
 
 {% macro site_nav(active) %}
 <nav class="site-nav" aria-label="Main">
-  {% for key, href, label in NAV_ITEMS %}
+    {% for key, href, label in NAV_ITEMS %}
     <a href="{{ href }}"{% if key == active %} aria-current="page"{% endif %}>{{ label }}</a>
-  {% endfor %}
+    {% endfor %}
 </nav>
+{% endmacro %}
+
+{% macro site_footer() %}
+<footer>
+    &copy; 2026 <a href="mailto:jussi.s.viinikainen@gmail.com">Jussi Viinikainen</a>. Licensed under the
+    <a href="https://github.com/jusaviin/capConverter?tab=MIT-1-ov-file" target="_blank" rel="noopener noreferrer">MIT License</a>.
+</footer>
 {% endmacro %}
