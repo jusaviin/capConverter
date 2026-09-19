@@ -194,9 +194,22 @@ function teamMarker(team, size) {
       popupAnchor: [0, -size / 2],
     });
   }
-  return L.marker(team.coordinates, options)
-    .bindTooltip(team.name)
+  const marker = L.marker(team.coordinates, options)
     .bindPopup(`<div class="popup-title">${escapeHtml(team.name)}</div>${escapeHtml(team.city)}`);
+
+  // Touch screens turn a tap into hover + click, which showed both.
+  // Only devices that can really hover get the tooltip.
+  if (canHover) {
+    marker.bindTooltip(team.name);
+    // Once the popup is open (clicked), hide the tooltip and keep
+    // it hidden while the mouse is still over the marker.
+    marker.on('popupopen', () => marker.closeTooltip());
+    marker.on('tooltipopen', () => {
+      if (marker.isPopupOpen()) marker.closeTooltip();
+    });
+  }
+
+  return marker;
 }
 
 function drawTeams() {
