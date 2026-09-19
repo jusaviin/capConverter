@@ -6,8 +6,10 @@ from datetime import datetime, timezone
 from flask import Flask, render_template, request, jsonify
 from salary_cap import salary_cap_finder
 from database_helper import get_connection
+from map_routes import map_bp
 
 app = Flask(__name__)
+app.register_blueprint(map_bp)
 
 # --- Visitor logging -------------------------------------------------
 

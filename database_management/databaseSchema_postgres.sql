@@ -56,6 +56,23 @@ CREATE TABLE seasons
     cap_floor INTEGER
 );
 
+-- Table for teams on NHL
+-- Currently the latest arena is listed in the teams table
+-- If the project is ever expanded to contain past arenas for teams, the arenas need to go to their own table
+-- We might want to also use franchise_id if the project is expanded to historical teams
+CREATE TABLE teams
+(
+    code CHAR(3) PRIMARY KEY NOT NULL,
+    name TEXT NOT NULL,
+    city TEXT NOT NULL,
+    logo TEXT,
+    arena TEXT,
+    arena_capacity INTEGER,
+    arena_latitude REAL,
+    arena_longitude REAL,
+    FOREIGN KEY (city) REFERENCES cities(name_NHL_API) ON UPDATE CASCADE
+);
+
 -- Table for contracts
 -- We have salary cap values for the start seasons, but not necessarily for the end seasons
 -- Thus we only use the foreign key contraint to the start season.
@@ -74,29 +91,12 @@ CREATE TABLE contracts
     cap_hit INTEGER,
     FOREIGN KEY (player_id) REFERENCES players(id),
     FOREIGN KEY (start_season) REFERENCES seasons(season),
-    FOREIGN KEY (signing_team) REFERENCES teams (code),
+    FOREIGN KEY (signing_team) REFERENCES teams (code)
 );
 
 -- To update the contracts table, we need a unique contraint from table columns
 ALTER TABLE contracts
 ADD CONSTRAINT contracts_unique_signing UNIQUE (player_id, signing_date);
-
--- Table for teams on NHL
--- Currently the latest arena is listed in the teams table
--- If the project is ever expanded to contain past arenas for teams, the arenas need to go to their own table
--- We might want to also use franchise_id if the project is expanded to historical teams
-CREATE TABLE teams
-(
-    code CHAR(3) PRIMARY KEY NOT NULL,
-    name TEXT NOT NULL,
-    city TEXT NOT NULL,
-    logo TEXT,
-    arena TEXT,
-    arena_capacity INTEGER,
-    arena_latitude REAL,
-    arena_longitude REAL,
-    FOREIGN KEY (city) REFERENCES cities(name_NHL_API) ON UPDATE CASCADE
-);
 
 -- Statistics tables are filled directly from MoneyPuck csv files
 -- See the MoneyPuck dictionary for explanation of column values
