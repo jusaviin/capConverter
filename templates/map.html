@@ -149,6 +149,9 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
 // Everything we draw goes into this group so a redraw is one clear().
 const drawLayer = L.layerGroup().addTo(map);
 
+// False on phones/tablets where the primary input is touch.
+const canHover = window.matchMedia('(hover: hover)').matches;
+
 const modeTeamsBtn = document.getElementById('mode-teams');
 const modeRostersBtn = document.getElementById('mode-rosters');
 const seasonSelect = document.getElementById('season-select');
@@ -219,12 +222,22 @@ function drawRoster(data) {
 
   data.cities.forEach((entry) => {
     const listHtml = entry.players.map((p) => `<li>${escapeHtml(p)}</li>`).join('');
-    // Same content for hover (tooltip) and click/tap (popup); touch
-    // screens have no hover, so the popup is what they use.
+    // Same content for hover (tooltip) and click/tap (popup). Only one
+    // of the two is ever visible at a time.
     const details = `<div class="popup-title">${escapeHtml(entry.city)}</div><ul class="popup-players">${listHtml}</ul>`;
-    const marker = L.marker(entry.coordinates)
-      .bindTooltip(details)
-      .bindPopup(details);
+    const marker = L.marker(entry.coordinates).bindPopup(details);
+
+    // Touch screens turn a tap into hover + click, which showed both.
+    // Only devices that can really hover get the tooltip.
+    if (canHover) {
+      marker.bindTooltip(details);
+      // Once the popup is open (clicked), hide the tooltip and keep
+      // it hidden while the mouse is still over the marker.
+      marker.on('popupopen', () => marker.closeTooltip());
+      marker.on('tooltipopen', () => {
+        if (marker.isPopupOpen()) marker.closeTooltip();
+      });
+    }
     cluster.addLayer(marker);
     points.push(entry.coordinates);
   });
@@ -317,8 +330,32 @@ function setMode(newMode) {
 
 modeTeamsBtn.addEventListener('click', () => setMode('teams'));
 modeRostersBtn.addEventListener('click', () => setMode('rosters'));
-seasonSelect.addEventListener('change', loadTeamsForSeason);
-teamSelect.addEventListener('change', refresh);
+// Counts a "new selection": the person picked a different season or team.
+// The automatic first load and the Teams/Roster toggle are not counted.
+// Failures are ignored on purpose -- this must never affect the map.
+function logMapEvent() {
+  const payload = {
+    session_id: VISIT_SESSION_ID,
+    mode,
+    season: Number(seasonSelect.value),
+    team: mode === 'rosters' ? teamSelect.value || null : null,
+  };
+  fetch('/api/map/event', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+    keepalive: true,
+  }).catch(() => {});
+}
+
+seasonSelect.addEventListener('change', async () => {
+  await loadTeamsForSeason();   // wait, so the final team for the new season is known
+  logMapEvent();
+});
+teamSelect.addEventListener('change', async () => {
+  await refresh();
+  logMapEvent();
+});
 
 async function init() {
   try {
