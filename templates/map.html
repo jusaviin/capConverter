@@ -162,8 +162,11 @@ function escapeHtml(text) {
 // Same season label style as the converter page: 2024 -> "2024-2025"
 const seasonLabel = (year) => `${year}-${year + 1}`;
 
+// Whole kilometers with a narrow no-break space (U+202F) between groups
+// of three digits, e.g. 12 345. No commas: they get confused with the
+// decimal point. The no-break space keeps a number from wrapping.
 function formatKm(km) {
-  return Number(km).toLocaleString('en-US');
+  return String(Math.round(Number(km))).replace(/\B(?=(\d{3})+(?!\d))/g, '\u202F');
 }
 
 function setStatus(message, isError = false) {
