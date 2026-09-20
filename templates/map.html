@@ -20,16 +20,17 @@
 <h1>NHL Team &amp; Roster Map</h1>
 
 <p id="intro" class="map-intro">
-  See where NHL teams play, or where a team's players were born. The map automatically updates every time you make a selection.
+  See where NHL teams play, or where a team's players were born. The map automatically updates every time you make a selection. You can also do a quiz trying to guess in which city a player matching your selections was born!
 </p>
 
 <div class="controls">
   <div class="mode-toggle" role="group" aria-label="Map type">
     <button type="button" id="mode-teams" class="active" aria-pressed="true">Teams</button>
     <button type="button" id="mode-rosters" aria-pressed="false">Roster</button>
+    <button type="button" id="mode-quiz" aria-pressed="false">Quiz</button>
   </div>
 
-  <label>
+  <label id="season-label">
     Season
     <select id="season-select" disabled></select>
   </label>
@@ -38,7 +39,29 @@
     Team
     <select id="team-select" disabled></select>
   </label>
+
+  <label id="quiz-season-label" hidden>
+    Quiz season
+    <select id="quiz-season-select" disabled></select>
+  </label>
+
+  <label id="quiz-team-label" hidden>
+    Quiz team
+    <select id="quiz-team-select" disabled></select>
+  </label>
+
+  <label id="quiz-count-label" hidden>
+    Questions
+    <select id="quiz-count-select">
+      <option>2</option><option>4</option><option>6</option><option>8</option><option selected>10</option><option>12</option><option>14</option><option>16</option><option>18</option><option>20</option>
+      <option value="all">All players</option>
+    </select>
+  </label>
+
+  <button type="button" id="quiz-start-btn" class="quiz-start-btn" disabled hidden>Start quiz</button>
 </div>
+
+<div id="quiz-panel" class="quiz-panel" hidden></div>
 
 <p id="status" role="status"></p>
 <div id="map"></div>
@@ -69,6 +92,15 @@
         The team logos are placed at the location of their stadium. The list of stadiums can be found on <a href="https://en.wikipedia.org/wiki/List_of_National_Hockey_League_arenas">Wikipedia</a>. These stadiums are then geolocated with Nominatim to place the logo in the correct spot.
         </p>
     </details>
+    <details>
+        <summary>How does the quiz work?</summary>
+        <p>
+        In the quiz, you must find the birth city of the randomly selected player. If you would like, you can restrict the selected players to those on a specific team, those that played during a specific season, or those that played on a specific team during a specific season. Then, select the number of questions and hit "Start quiz." Locate the correct birth city for the player displayed.
+        </p>
+        <p>
+        Your score for each question depends on how close to the correct answer you were. If you manage to get a perfect score of 0 km away, you are a legend!
+        </p>
+    </details>
 </div>
 
 {{ site_footer() }}
@@ -88,16 +120,38 @@ const drawLayer = L.layerGroup().addTo(map);
 // False on phones/tablets where the primary input is touch.
 const canHover = window.matchMedia('(hover: hover)').matches;
 
+const introEl = document.getElementById('intro');
 const modeTeamsBtn = document.getElementById('mode-teams');
 const modeRostersBtn = document.getElementById('mode-rosters');
+const modeQuizBtn = document.getElementById('mode-quiz');
+const seasonControl = document.getElementById('season-label');
 const seasonSelect = document.getElementById('season-select');
 const teamSelect = document.getElementById('team-select');
 const teamLabel = document.getElementById('team-label');
+const quizSeasonControl = document.getElementById('quiz-season-label');
+const quizSeasonSelect = document.getElementById('quiz-season-select');
+const quizTeamControl = document.getElementById('quiz-team-label');
+const quizTeamSelect = document.getElementById('quiz-team-select');
+const quizCountControl = document.getElementById('quiz-count-label');
+const quizCountSelect = document.getElementById('quiz-count-select');
+const quizStartBtn = document.getElementById('quiz-start-btn');
+const quizPanel = document.getElementById('quiz-panel');
 const statusEl = document.getElementById('status');
 
-let mode = 'teams';          // 'teams' | 'rosters'
+let mode = 'teams';          // 'teams' | 'rosters' | 'quiz'
 let teams = [];              // teams for the selected season
 let requestCounter = 0;      // used to ignore responses that arrive out of order
+
+// Quiz state. null when no quiz is running. phase is one of
+// 'asking' (waiting for a guess), 'answered' (result shown) or 'finished'.
+let quiz = null;
+let quizLoading = false;         // a quiz is being fetched
+let quizTeamsLoading = false;    // the quiz team dropdown is being refilled
+let quizTeamsRequest = 0;        // ignores out-of-order team list responses
+let quizSeasonsLoading = false;  // the quiz season dropdown is being refilled
+let quizSeasonsRequest = 0;      // ignores out-of-order season list responses
+let quizSeasonsReady = false;    // the initial season list has been loaded
+let allSeasons = [];             // every season, newest first (unfiltered list)
 
 function escapeHtml(text) {
   const div = document.createElement('div');
@@ -107,6 +161,10 @@ function escapeHtml(text) {
 
 // Same season label style as the converter page: 2024 -> "2024-2025"
 const seasonLabel = (year) => `${year}-${year + 1}`;
+
+function formatKm(km) {
+  return Number(km).toLocaleString('en-US');
+}
 
 function setStatus(message, isError = false) {
   statusEl.textContent = message;
@@ -118,6 +176,19 @@ async function getJson(url) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || 'Something went wrong.');
   return data;
+}
+
+// Touch screens turn a tap into hover + click, which showed both.
+// Only devices that can really hover get the tooltip.
+function bindHoverTooltip(marker, content) {
+  if (!canHover) return;
+  marker.bindTooltip(content);
+  // Once the popup is open (clicked), hide the tooltip and keep
+  // it hidden while the mouse is still over the marker.
+  marker.on('popupopen', () => marker.closeTooltip());
+  marker.on('tooltipopen', () => {
+    if (marker.isPopupOpen()) marker.closeTooltip();
+  });
 }
 
 function teamMarker(team, size) {
@@ -132,19 +203,7 @@ function teamMarker(team, size) {
   }
   const marker = L.marker(team.coordinates, options)
     .bindPopup(`<div class="popup-title">${escapeHtml(team.name)}</div>${escapeHtml(team.city)}`);
-
-  // Touch screens turn a tap into hover + click, which showed both.
-  // Only devices that can really hover get the tooltip.
-  if (canHover) {
-    marker.bindTooltip(team.name);
-    // Once the popup is open (clicked), hide the tooltip and keep
-    // it hidden while the mouse is still over the marker.
-    marker.on('popupopen', () => marker.closeTooltip());
-    marker.on('tooltipopen', () => {
-      if (marker.isPopupOpen()) marker.closeTooltip();
-    });
-  }
-
+  bindHoverTooltip(marker, team.name);
   return marker;
 }
 
@@ -175,18 +234,7 @@ function drawRoster(data) {
     // of the two is ever visible at a time.
     const details = `<div class="popup-title">${escapeHtml(entry.city)}</div><ul class="popup-players">${listHtml}</ul>`;
     const marker = L.marker(entry.coordinates).bindPopup(details);
-
-    // Touch screens turn a tap into hover + click, which showed both.
-    // Only devices that can really hover get the tooltip.
-    if (canHover) {
-      marker.bindTooltip(details);
-      // Once the popup is open (clicked), hide the tooltip and keep
-      // it hidden while the mouse is still over the marker.
-      marker.on('popupopen', () => marker.closeTooltip());
-      marker.on('tooltipopen', () => {
-        if (marker.isPopupOpen()) marker.closeTooltip();
-      });
-    }
+    bindHoverTooltip(marker, details);
     cluster.addLayer(marker);
     points.push(entry.coordinates);
   });
@@ -207,7 +255,11 @@ function drawRoster(data) {
   }
 }
 
+// Redraws the Teams or Roster view. Quiz mode draws its own map, so
+// there is nothing to refresh there.
 async function refresh() {
+  if (mode === 'quiz') return;
+
   const myRequest = ++requestCounter;
 
   if (mode === 'teams') {
@@ -267,44 +319,412 @@ async function loadTeamsForSeason() {
   await refresh();
 }
 
+/* ------------------------------------------------------------------
+   Quiz
+   ------------------------------------------------------------------ */
+
+// Great-circle distance in kilometers between two [lat, lon] points.
+function haversineKm([lat1, lon1], [lat2, lon2]) {
+  const R = 6371;
+  const rad = Math.PI / 180;
+  const dLat = (lat2 - lat1) * rad;
+  const dLon = (lon2 - lon1) * rad;
+  const a = Math.sin(dLat / 2) ** 2
+    + Math.cos(lat1 * rad) * Math.cos(lat2 * rad) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(a)));
+}
+
+function syncQuizStartButton() {
+  quizStartBtn.disabled = !quizSeasonsReady || quizLoading || quizTeamsLoading || quizSeasonsLoading;
+  quizStartBtn.textContent = quizLoading ? 'Loading...' : (quiz ? 'Restart quiz' : 'Start quiz');
+}
+
+// Fills the quiz season dropdown. With a team chosen, only the seasons
+// that team played are listed; with "Any team" every season is listed.
+// This is the counterpart of loadQuizTeams, so the two dropdowns narrow
+// each other whichever one is picked first.
+async function loadQuizSeasons() {
+  const myRequest = ++quizSeasonsRequest;
+  const team = quizTeamSelect.value;
+  const previousSeason = quizSeasonSelect.value;
+
+  let seasons = allSeasons;
+  let errorMessage = null;
+  if (team) {
+    quizSeasonsLoading = true;
+    quizSeasonSelect.disabled = true;
+    syncQuizStartButton();
+    try {
+      seasons = (await getJson(`/api/map/seasons?team=${encodeURIComponent(team)}`)).seasons;
+    } catch (err) {
+      errorMessage = err.message;   // fall back to listing every season
+    }
+    if (myRequest !== quizSeasonsRequest) return; // a newer request superseded this one
+  }
+
+  quizSeasonSelect.innerHTML = '';
+  const anyOption = document.createElement('option');
+  anyOption.value = '';
+  anyOption.textContent = 'Any season';
+  quizSeasonSelect.appendChild(anyOption);
+  seasons.forEach((season) => {
+    const option = document.createElement('option');
+    option.value = season;
+    option.textContent = seasonLabel(season);
+    quizSeasonSelect.appendChild(option);
+  });
+  // Keep the same season selected when it is still in the list. It
+  // always is when a team was picked after a season, since the team
+  // list only contained teams that played that season.
+  if (seasons.some((s) => String(s) === previousSeason)) quizSeasonSelect.value = previousSeason;
+
+  quizSeasonSelect.disabled = false;
+  quizSeasonsLoading = false;
+  syncQuizStartButton();
+  if (errorMessage && mode === 'quiz') setStatus(errorMessage, true);
+}
+
+// Fills the quiz team dropdown for the chosen quiz season ("Any season"
+// lists every team that has ever played).
+async function loadQuizTeams() {
+  const myRequest = ++quizTeamsRequest;
+  const season = quizSeasonSelect.value;
+  const previousTeam = quizTeamSelect.value;
+
+  quizTeamsLoading = true;
+  quizTeamSelect.disabled = true;
+  syncQuizStartButton();
+
+  let quizTeams = [];
+  let errorMessage = null;
+  try {
+    const url = season ? `/api/map/teams?season=${encodeURIComponent(season)}` : '/api/map/teams';
+    quizTeams = (await getJson(url)).teams;
+  } catch (err) {
+    errorMessage = err.message;
+  }
+  if (myRequest !== quizTeamsRequest) return; // a newer request superseded this one
+
+  quizTeamSelect.innerHTML = '';
+  const anyOption = document.createElement('option');
+  anyOption.value = '';
+  anyOption.textContent = 'Any team';
+  quizTeamSelect.appendChild(anyOption);
+  quizTeams.forEach((team) => {
+    const option = document.createElement('option');
+    option.value = team.code;
+    option.textContent = team.name;
+    quizTeamSelect.appendChild(option);
+  });
+  // Keep the same team selected when it still exists for the new season.
+  if (quizTeams.some((t) => t.code === previousTeam)) quizTeamSelect.value = previousTeam;
+
+  quizTeamSelect.disabled = false;
+  quizTeamsLoading = false;
+  syncQuizStartButton();
+  if (errorMessage && mode === 'quiz') setStatus(errorMessage, true);
+}
+
+function quizMarker(city) {
+  const marker = L.marker(city.coordinates);
+
+  // The popup holds the town name and the Select button. Built as DOM
+  // elements (not an HTML string) so the button can have a real listener.
+  const box = document.createElement('div');
+  const title = document.createElement('div');
+  title.className = 'popup-title';
+  title.textContent = city.city;
+  const selectBtn = document.createElement('button');
+  selectBtn.type = 'button';
+  selectBtn.className = 'select-btn';
+  selectBtn.textContent = 'Select';
+  selectBtn.addEventListener('click', () => submitGuess(city));
+  box.append(title, selectBtn);
+  marker.bindPopup(box);
+
+  // After a question has been answered the markers stay visible, but
+  // guessing again is not possible, so the button is hidden.
+  marker.on('popupopen', () => {
+    selectBtn.hidden = !(quiz && quiz.phase === 'asking');
+  });
+
+  // Hover shows only the town name.
+  bindHoverTooltip(marker, escapeHtml(city.city));
+  return marker;
+}
+
+function quizPin(coordinates, kind, label) {
+  const pin = L.marker(coordinates, {
+    icon: L.divIcon({
+      className: `quiz-pin quiz-pin-${kind}`,
+      iconSize: [22, 22],
+    }),
+    interactive: false,
+    keyboard: false,
+    zIndexOffset: 1000,
+  });
+  pin.bindTooltip(escapeHtml(label), { permanent: true, direction: 'top', offset: [0, -12] });
+  return pin;
+}
+
+function showQuestion() {
+  const question = quiz.questions[quiz.index];
+  quiz.phase = 'asking';
+
+  map.closePopup();
+  drawLayer.clearLayers();
+  const cluster = L.markerClusterGroup();
+  question.cities.forEach((city) => cluster.addLayer(quizMarker(city)));
+  drawLayer.addLayer(cluster);
+  map.fitBounds(L.latLngBounds(question.cities.map((c) => c.coordinates)), {
+    padding: [30, 30],
+    maxZoom: 7,
+  });
+
+  setStatus('');
+  renderQuizPanel();
+}
+
+function submitGuess(guess) {
+  if (!quiz || quiz.phase !== 'asking') return;
+
+  const question = quiz.questions[quiz.index];
+  const correct = question.cities.find((c) => c.city === question.correct_city);
+  const isCorrect = guess.city === question.correct_city;
+
+  // Rounded to whole kilometers. A wrong town is never shown as 0 km,
+  // even if it happens to be very close.
+  const error = isCorrect
+    ? 0
+    : Math.max(1, Math.round(haversineKm(guess.coordinates, correct.coordinates)));
+
+  quiz.totalError += error;
+  quiz.lastResult = { isCorrect, error, guessCity: guess.city, correctCity: question.correct_city };
+  quiz.results.push({
+    player: question.player,
+    team: question.team,
+    season: question.season,
+    guess: guess.city,
+    correct: question.correct_city,
+    error,
+  });
+  quiz.phase = 'answered';
+
+  map.closePopup();
+
+  // Show the correct town, and for a miss also the guess and a line
+  // between them.
+  if (isCorrect) {
+    drawLayer.addLayer(quizPin(correct.coordinates, 'correct', `Correct: ${correct.city}`));
+  } else {
+    drawLayer.addLayer(L.polyline([guess.coordinates, correct.coordinates], {
+      color: '#dc2626',
+      weight: 3,
+      dashArray: '8 8',
+      interactive: false,
+    }));
+    drawLayer.addLayer(quizPin(correct.coordinates, 'correct', `Correct: ${correct.city}`));
+    drawLayer.addLayer(quizPin(guess.coordinates, 'guess', `Your guess: ${guess.city}`));
+    map.fitBounds(L.latLngBounds([guess.coordinates, correct.coordinates]), {
+      padding: [60, 60],
+      maxZoom: 7,
+    });
+  }
+
+  renderQuizPanel();
+}
+
+function nextQuestion() {
+  if (!quiz || quiz.phase !== 'answered') return;
+  if (quiz.index + 1 >= quiz.questions.length) {
+    quiz.phase = 'finished';
+    map.closePopup();
+    renderQuizPanel();
+    return;
+  }
+  quiz.index += 1;
+  showQuestion();
+}
+
+function quizFactsHtml(question) {
+  return `
+    <div class="quiz-facts">
+      <div class="quiz-fact"><span class="quiz-fact-label">Player</span><span class="quiz-fact-value">${escapeHtml(question.player)}</span></div>
+      <div class="quiz-fact"><span class="quiz-fact-label">Team</span><span class="quiz-fact-value">${escapeHtml(question.team)}</span></div>
+      <div class="quiz-fact"><span class="quiz-fact-label">Season</span><span class="quiz-fact-value">${escapeHtml(seasonLabel(question.season))}</span></div>
+    </div>`;
+}
+
+function renderQuizPanel() {
+  syncQuizStartButton();
+
+  if (!quiz) {
+    quizPanel.hidden = true;
+    quizPanel.innerHTML = '';
+    return;
+  }
+  quizPanel.hidden = false;
+
+  if (quiz.phase === 'finished') {
+    renderQuizResults();
+    return;
+  }
+
+  const question = quiz.questions[quiz.index];
+  const total = quiz.questions.length;
+  let html = `
+    <div class="quiz-progress">
+      <span>Question ${quiz.index + 1} of ${total}</span>
+      <span>Total error: ${formatKm(quiz.totalError)} km</span>
+    </div>
+    ${quizFactsHtml(question)}`;
+
+  if (quiz.phase === 'asking') {
+    html += '<p class="quiz-hint">Where was he born? Click or tap a marker, then press Select.</p>';
+  } else {
+    const r = quiz.lastResult;
+    const isLast = quiz.index + 1 >= total;
+    html += r.isCorrect
+      ? `<div class="quiz-feedback correct">Correct! ${escapeHtml(r.correctCity)}.</div>`
+      : `<div class="quiz-feedback miss">You were off by ${formatKm(r.error)} km. You chose ${escapeHtml(r.guessCity)}; the correct hometown is ${escapeHtml(r.correctCity)}.</div>`;
+    html += `<button type="button" id="quiz-next-btn" class="quiz-next-btn">${isLast ? 'See results' : 'Next question'}</button>`;
+  }
+
+  quizPanel.innerHTML = html;
+  const nextBtn = document.getElementById('quiz-next-btn');
+  if (nextBtn) {
+    nextBtn.addEventListener('click', nextQuestion);
+    nextBtn.focus();
+  }
+}
+
+function renderQuizResults() {
+  const total = quiz.questions.length;
+  const perfect = quiz.totalError === 0;
+  const average = Math.round(quiz.totalError / total);
+
+  const rows = quiz.results.map((r) => `
+    <tr>
+      <td>${escapeHtml(r.player)}<div class="quiz-row-sub">${escapeHtml(r.team)}, ${escapeHtml(seasonLabel(r.season))}</div></td>
+      <td>${escapeHtml(r.guess)}</td>
+      <td>${escapeHtml(r.correct)}</td>
+      <td class="num">${formatKm(r.error)} km</td>
+    </tr>`).join('');
+
+  quizPanel.innerHTML = `
+    <div class="quiz-progress"><span>Quiz complete</span></div>
+    <div class="quiz-total">Total error: ${formatKm(quiz.totalError)} km</div>
+    ${perfect
+      ? '<p class="quiz-verdict">Great! You are a true fan!</p>'
+      : `<p class="quiz-hint">That is ${formatKm(average)} km off per question on average. Lower is better.</p>`}
+    <div class="quiz-table-scroll">
+      <table class="quiz-results-table">
+        <thead><tr><th>Player</th><th>Your guess</th><th>Correct</th><th class="num">Error</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    <button type="button" id="quiz-again-btn" class="quiz-next-btn">Play again</button>
+    <p class="quiz-hint">Play again uses the season and team selected above. Change them first for a different quiz.</p>`;
+
+  document.getElementById('quiz-again-btn').addEventListener('click', startQuiz);
+}
+
+async function startQuiz() {
+  const myRequest = ++requestCounter;
+
+  quiz = null;
+  map.closePopup();
+  drawLayer.clearLayers();
+  renderQuizPanel();
+
+  const params = new URLSearchParams();
+  if (quizSeasonSelect.value) params.set('season', quizSeasonSelect.value);
+  if (quizTeamSelect.value) params.set('team', quizTeamSelect.value);
+  // Either a number of questions or "all" (every player that matches
+  // the season and team; the server caps this at a sensible maximum).
+  const requestedCount = quizCountSelect.value === 'all' ? 'all' : Number(quizCountSelect.value);
+  params.set('count', requestedCount);
+
+  quizLoading = true;
+  syncQuizStartButton();
+  setStatus('Loading quiz...');
+  try {
+    const data = await getJson(`/api/map/quiz?${params}`);
+    if (myRequest !== requestCounter || mode !== 'quiz') return; // superseded
+
+    if (data.questions.length === 0) {
+      setStatus('Not enough player data for that season and team. Try different filters.', true);
+      return;
+    }
+
+    quiz = { questions: data.questions, index: 0, phase: 'asking', totalError: 0, results: [], lastResult: null };
+    showQuestion();
+    if (data.capped) {
+      setStatus(`That is a lot of players, so the quiz is limited to ${data.questions.length} of them. Pick a season and team to quiz on a whole roster.`);
+    } else if (requestedCount !== 'all' && data.questions.length < requestedCount) {
+      setStatus(`Only ${data.questions.length} questions were available for that season and team.`);
+    }
+  } catch (err) {
+    if (myRequest !== requestCounter) return;
+    setStatus(err.message, true);
+  } finally {
+    quizLoading = false;
+    syncQuizStartButton();
+  }
+}
+
+/* ------------------------------------------------------------------
+   Mode switching and event wiring
+   ------------------------------------------------------------------ */
+
 function setMode(newMode) {
+  const wasQuiz = mode === 'quiz';
   mode = newMode;
+  const isQuiz = mode === 'quiz';
+
+  // Drop any response that is still in flight for the previous mode.
+  requestCounter++;
+
+  // Leaving quiz mode abandons the quiz; entering it starts from setup.
+  if (wasQuiz || isQuiz) {
+    quiz = null;
+    quizLoading = false;
+    map.closePopup();
+    drawLayer.clearLayers();
+    renderQuizPanel();
+  }
+
   modeTeamsBtn.classList.toggle('active', mode === 'teams');
   modeRostersBtn.classList.toggle('active', mode === 'rosters');
+  modeQuizBtn.classList.toggle('active', isQuiz);
   modeTeamsBtn.setAttribute('aria-pressed', String(mode === 'teams'));
   modeRostersBtn.setAttribute('aria-pressed', String(mode === 'rosters'));
+  modeQuizBtn.setAttribute('aria-pressed', String(isQuiz));
+
+  seasonControl.hidden = isQuiz;
   teamLabel.hidden = mode !== 'rosters';
-  refresh();
+  quizSeasonControl.hidden = !isQuiz;
+  quizTeamControl.hidden = !isQuiz;
+  quizCountControl.hidden = !isQuiz;
+  quizStartBtn.hidden = !isQuiz;
+  syncQuizStartButton();
+
+  if (isQuiz) {
+    setStatus('Choose a season and team, or leave both on "Any", then press "Start quiz".');
+  } else {
+    refresh();
+  }
 }
 
 modeTeamsBtn.addEventListener('click', () => setMode('teams'));
 modeRostersBtn.addEventListener('click', () => setMode('rosters'));
-// Counts a "new selection": the person picked a different season or team.
-// The automatic first load and the Teams/Roster toggle are not counted.
-// Failures are ignored on purpose -- this must never affect the map.
-function logMapEvent() {
-  const payload = {
-    session_id: VISIT_SESSION_ID,
-    mode,
-    season: Number(seasonSelect.value),
-    team: mode === 'rosters' ? teamSelect.value || null : null,
-  };
-  fetch('/api/map/event', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-    keepalive: true,
-  }).catch(() => {});
-}
+modeQuizBtn.addEventListener('click', () => setMode('quiz'));
+quizSeasonSelect.addEventListener('change', loadQuizTeams);
+quizTeamSelect.addEventListener('change', loadQuizSeasons);
+quizStartBtn.addEventListener('click', startQuiz);
 
-seasonSelect.addEventListener('change', async () => {
-  await loadTeamsForSeason();   // wait, so the final team for the new season is known
-  logMapEvent();
-});
-teamSelect.addEventListener('change', async () => {
-  await refresh();
-  logMapEvent();
-});
+seasonSelect.addEventListener('change', loadTeamsForSeason);
+teamSelect.addEventListener('change', refresh);
 
 async function init() {
   try {
@@ -313,14 +733,20 @@ async function init() {
       setStatus('No season data available yet.', true);
       return;
     }
-    data.seasons.forEach((season) => {
+
+    allSeasons = data.seasons;
+    allSeasons.forEach((season) => {
       const option = document.createElement('option');
       option.value = season;
       option.textContent = seasonLabel(season);
       seasonSelect.appendChild(option);
     });
     seasonSelect.disabled = false;   // newest season is selected by default
-    await loadTeamsForSeason();
+    quizSeasonsReady = true;
+
+    // The quiz dropdowns are filled by their own loaders, which also
+    // handle narrowing them down later.
+    await Promise.all([loadTeamsForSeason(), loadQuizTeams(), loadQuizSeasons()]);
   } catch (err) {
     setStatus(err.message, true);
   }
