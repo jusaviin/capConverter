@@ -23,15 +23,15 @@ map_bp = Blueprint("map", __name__)
 # and QUIZ_DEFAULT_QUESTIONS is used when nothing is requested. If the
 # chosen filters do not have enough eligible players, the quiz is simply
 # shorter.
-QUIZ_MAX_QUESTIONS = 20
+QUIZ_MAX_QUESTIONS = 100
 QUIZ_DEFAULT_QUESTIONS = 10
 
-# count=all asks for every eligible player (one question each). That is
-# meant for a single team in a single season, where it is a roster's
-# worth of questions. With broader filters it could be thousands of
-# players, so the quiz is capped at this many questions (picked at
-# random) to keep the response and the quiz itself a sensible size.
-QUIZ_ALL_PLAYERS_CAP = 100
+# count=all means "the whole roster": every eligible player of one team
+# in one season, one question each. It is only allowed when both a
+# season and a team are given, so it can never grow beyond a roster.
+# This is a safety limit on how many candidate players are looked at in
+# that case; a roster is far smaller than this.
+QUIZ_WHOLE_ROSTER_LIMIT = 1000
 
 # We draw this many random candidate players per requested question,
 # because some candidates get skipped (for example when every player on
@@ -243,8 +243,8 @@ def map_quiz():
       season -- limit the quiz to one season (default: any season)
       team   -- limit the quiz to one team code (default: any team)
       count  -- number of questions, 1 to QUIZ_MAX_QUESTIONS (default 10),
-                or "all" for every eligible player (capped at
-                QUIZ_ALL_PLAYERS_CAP)
+                or "all" for the whole roster, which requires both a
+                season and a team
 
     Returns up to `count` questions. Each question names a player,
     the team and the season, and lists every hometown on that team's
@@ -259,11 +259,15 @@ def map_quiz():
     if team_code and len(team_code) > 10:
         return jsonify({"error": "Invalid team."}), 400
 
-    # "all" means every eligible player, up to the cap; otherwise a
-    # number of questions within the allowed range.
-    all_players = raw_count == "all"
-    if all_players:
-        count = QUIZ_ALL_PLAYERS_CAP
+    # "all" means the whole roster of one team in one season; otherwise
+    # a number of questions within the allowed range.
+    whole_roster = raw_count == "all"
+    if whole_roster:
+        if season is None or not team_code:
+            return jsonify({
+                "error": 'count "all" needs both a season and a team.'
+            }), 400
+        count = None  # no limit on the number of questions
     else:
         try:
             count = int(raw_count)
@@ -288,7 +292,10 @@ def map_quiz():
     if team_code:
         filters.append("team_code = %s")
         params.append(team_code)
-    params.append(count * QUIZ_CANDIDATES_PER_QUESTION)
+    if whole_roster:
+        params.append(QUIZ_WHOLE_ROSTER_LIMIT)
+    else:
+        params.append(count * QUIZ_CANDIDATES_PER_QUESTION)
 
     conn = get_connection()
     try:
@@ -319,16 +326,11 @@ def map_quiz():
         candidates = cur.fetchall()
 
         questions = []
-        capped = False  # True if "all players" had to be cut off at the cap
         roster_cache = {}  # (team_code, season) -> list of city dicts
 
         for (_player_id, q_season, q_team_code, q_team_name,
              first, last, city, state) in candidates:
-            if len(questions) >= count:
-                # Reaching this point means at least one more candidate
-                # was left over, i.e. there were more players than we
-                # are asking about.
-                capped = all_players
+            if count is not None and len(questions) >= count:
                 break
 
             cache_key = (q_team_code, q_season)
@@ -370,4 +372,4 @@ def map_quiz():
     finally:
         conn.close()
 
-    return jsonify({"questions": questions, "capped": capped})
+    return jsonify({"questions": questions})

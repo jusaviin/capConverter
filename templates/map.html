@@ -53,8 +53,7 @@
   <label id="quiz-count-label" hidden>
     Questions
     <select id="quiz-count-select">
-      <option>2</option><option>4</option><option>6</option><option>8</option><option selected>10</option><option>12</option><option>14</option><option>16</option><option>18</option><option>20</option>
-      <option value="all">All players</option>
+      <option>1</option><option>5</option><option selected>10</option><option>15</option><option>20</option><option>25</option><option>50</option><option>100</option>
     </select>
   </label>
 
@@ -337,6 +336,37 @@ function haversineKm([lat1, lon1], [lat2, lon2]) {
   return 2 * R * Math.asin(Math.min(1, Math.sqrt(a)));
 }
 
+// The question-count choices depend on the filters. With "Any" season or
+// team the quiz draws from a large pool, so the choices go up to 100.
+// With one specific team and one specific season the pool is a single
+// roster, so the choices are short and the last one is the whole roster.
+const QUIZ_COUNTS_BROAD = [1, 5, 10, 15, 20, 25, 50, 100];
+const QUIZ_COUNTS_ROSTER = [1, 5, 10, 15, 20];
+
+function updateQuizCountOptions() {
+  const specific = quizSeasonSelect.value !== '' && quizTeamSelect.value !== '';
+  const previous = quizCountSelect.value;
+
+  quizCountSelect.innerHTML = '';
+  (specific ? QUIZ_COUNTS_ROSTER : QUIZ_COUNTS_BROAD).forEach((n) => {
+    const option = document.createElement('option');
+    option.value = n;
+    option.textContent = n;
+    quizCountSelect.appendChild(option);
+  });
+  if (specific) {
+    const option = document.createElement('option');
+    option.value = 'all';
+    option.textContent = 'Whole roster';
+    quizCountSelect.appendChild(option);
+  }
+
+  // Keep the previous choice when it still exists, otherwise go back to
+  // the default of 10.
+  const stillThere = [...quizCountSelect.options].some((o) => o.value === previous);
+  quizCountSelect.value = stillThere ? previous : '10';
+}
+
 function syncQuizStartButton() {
   quizStartBtn.disabled = !quizSeasonsReady || quizLoading || quizTeamsLoading || quizSeasonsLoading;
   quizStartBtn.textContent = quizLoading ? 'Loading...' : (quiz ? 'Restart quiz' : 'Start quiz');
@@ -383,6 +413,7 @@ async function loadQuizSeasons() {
 
   quizSeasonSelect.disabled = false;
   quizSeasonsLoading = false;
+  updateQuizCountOptions();
   syncQuizStartButton();
   if (errorMessage && mode === 'quiz') setStatus(errorMessage, true);
 }
@@ -424,6 +455,7 @@ async function loadQuizTeams() {
 
   quizTeamSelect.disabled = false;
   quizTeamsLoading = false;
+  updateQuizCountOptions();
   syncQuizStartButton();
   if (errorMessage && mode === 'quiz') setStatus(errorMessage, true);
 }
@@ -643,8 +675,8 @@ async function startQuiz() {
   const params = new URLSearchParams();
   if (quizSeasonSelect.value) params.set('season', quizSeasonSelect.value);
   if (quizTeamSelect.value) params.set('team', quizTeamSelect.value);
-  // Either a number of questions or "all" (every player that matches
-  // the season and team; the server caps this at a sensible maximum).
+  // Either a number of questions or "all" (the whole roster, which is
+  // only offered when both a season and a team are chosen).
   const requestedCount = quizCountSelect.value === 'all' ? 'all' : Number(quizCountSelect.value);
   params.set('count', requestedCount);
 
@@ -662,9 +694,7 @@ async function startQuiz() {
 
     quiz = { questions: data.questions, index: 0, phase: 'asking', totalError: 0, results: [], lastResult: null };
     showQuestion();
-    if (data.capped) {
-      setStatus(`That is a lot of players, so the quiz is limited to ${data.questions.length} of them. Pick a season and team to quiz on a whole roster.`);
-    } else if (requestedCount !== 'all' && data.questions.length < requestedCount) {
+    if (requestedCount !== 'all' && data.questions.length < requestedCount) {
       setStatus(`Only ${data.questions.length} questions were available for that season and team.`);
     }
   } catch (err) {
