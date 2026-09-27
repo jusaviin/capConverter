@@ -785,7 +785,7 @@ function renderComparables() {
             
     item.innerHTML = `
       <div class="primary">
-        <span>${row.player_name}${row.position ? ` &middot; ${row.position}` : ''}</span>
+        <span>${row.rank != null ? `<span class="comparable-rank">#${row.rank}</span> ` : ''}${row.player_name}${row.position ? ` &middot; ${row.position}` : ''}</span>
         <span>${displayValue}</span>
       </div>
       <div class="secondary">${row.team ? `${row.team} &middot; ` : ''}${row.type} &middot; ${seasonLabel(row.start_season)} to ${seasonLabel(row.end_season)}</div>

@@ -387,7 +387,7 @@ def get_comparable_contracts():
         # Fetch closest 10 by cap hit distance
         cur.execute(
             f"""
-            SELECT p.first_name, p.last_name, p.position, c.cap_hit, c.start_season, c.end_season, c.type,
+            SELECT c.id, p.first_name, p.last_name, p.position, c.cap_hit, c.start_season, c.end_season, c.type,
                    c.signing_team AS team
             FROM contracts c
             JOIN players p ON p.id = c.player_id
@@ -409,11 +409,16 @@ def get_comparable_contracts():
         all_rows = cur.fetchall()
 
         # Re-sort the selected 10 by cap hit magnitude (largest to smallest)
-        all_rows = sorted(all_rows, key=lambda row: row[3], reverse=True)
+        all_rows = sorted(all_rows, key=lambda row: row[4], reverse=True)
 
+        # Same WHERE clauses as the query above, minus the ORDER/LIMIT --
+        # this is "every contract active in this season" (matching the
+        # position filter), used both to rank the all_rows contracts by
+        # raw cap hit against the full field, and to compute + rank
+        # everyone's average cap percentage below.
         cur.execute(
             f"""
-            SELECT p.first_name, p.last_name, p.position, c.cap_hit, c.start_season, c.end_season, c.type,
+            SELECT c.id, p.first_name, p.last_name, p.position, c.cap_hit, c.start_season, c.end_season, c.type,
                    c.signing_team AS team
             FROM contracts c
             JOIN players p ON p.id = c.player_id
@@ -433,8 +438,29 @@ def get_comparable_contracts():
     finally:
         conn.close()
 
+    # Standard "competition" ranking (1, 2, 2, 4, ...): equal values share
+    # a rank, and the next distinct value's rank accounts for the ties
+    # above it. 1 always means the single highest value in the field.
+    def rank_by_value(id_value_pairs):
+        ranks = {}
+        previous_value = None
+        current_rank = 0
+        for position_index, (row_id, value) in enumerate(
+            sorted(id_value_pairs, key=lambda pair: pair[1], reverse=True), start=1
+        ):
+            if value != previous_value:
+                current_rank = position_index
+                previous_value = value
+            ranks[row_id] = current_rank
+        return ranks
+
+    # Rank every contract active this season (matching the position
+    # filter) by raw cap hit, so the 10 shown can carry their rank
+    # among the full field, not just among themselves.
+    cap_hit_ranks = rank_by_value((row[0], row[4]) for row in candidates)
+
     formatted_avg_percentage_rows = []
-    for first_name, last_name, position, cap_hit, start_season, end_season, contract_type, team in candidates:
+    for contract_id, first_name, last_name, position, cap_hit, start_season, end_season, contract_type, team in candidates:
         duration = end_season - start_season + 1
         if duration <= 0:
             continue
@@ -455,6 +481,7 @@ def get_comparable_contracts():
         diff = abs(c_avg_cap_percentage - target_avg_cap_percentage)
 
         formatted_avg_percentage_rows.append({
+            "id": contract_id,
             "player_name": f"{first_name} {last_name}",
             "position": position,
             "cap_hit_millions": round(cap_hit / 1_000_000, 4),
@@ -466,6 +493,13 @@ def get_comparable_contracts():
             "diff": diff,
         })
 
+    # Rank every contract with a valid average cap percentage (same
+    # population as above) so the top 10 shown can carry their rank
+    # among the full field.
+    avg_cap_percentage_ranks = rank_by_value(
+        (r["id"], r["avg_cap_percentage"]) for r in formatted_avg_percentage_rows
+    )
+
     # Pick the 10 closest contracts by diff
     formatted_avg_percentage_rows.sort(key=lambda x: x["diff"])
     top_avg_percentage = formatted_avg_percentage_rows[:10]
@@ -474,7 +508,9 @@ def get_comparable_contracts():
     top_avg_percentage.sort(key=lambda x: x["avg_cap_percentage"], reverse=True)
 
     for r in top_avg_percentage:
+        r["rank"] = avg_cap_percentage_ranks[r["id"]]
         del r["diff"]
+        del r["id"]
 
     def format_rows(rows):
         return [
@@ -486,8 +522,9 @@ def get_comparable_contracts():
                 "end_season": end_season,
                 "type": contract_type,
                 "team": team,
+                "rank": cap_hit_ranks[contract_id],
             }
-            for first_name, last_name, position, cap_hit, start_season, end_season, contract_type, team in rows
+            for contract_id, first_name, last_name, position, cap_hit, start_season, end_season, contract_type, team in rows
         ]
 
     return jsonify({
