@@ -522,6 +522,17 @@ footer a:hover {
   background: #fafafa;
   font-size: 0.9rem;
 }
+.comparable-item.reference {
+  background: #fee2e2;
+  border-color: #f87171;
+}
+.comparable-item.reference .secondary {
+  color: #991b1b;
+}
+.comparable-item.reference .comparable-rank {
+  background: #fecaca;
+  color: #b91c1c;
+}
 .comparable-item .primary {
   font-weight: 600;
   color: #1a1a1a;

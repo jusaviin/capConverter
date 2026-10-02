@@ -436,6 +436,23 @@ def get_comparable_contracts():
             },
         )
         candidates = cur.fetchall()
+
+        # The real contract the user picked as reference (if any). It's
+        # excluded from the candidates above so it can't show up twice;
+        # it's added back below as one extra, flagged row.
+        reference_row = None
+        if exclude_contract_id:
+            cur.execute(
+                """
+                SELECT p.first_name, p.last_name, p.position, c.start_season,
+                       c.end_season, c.type, c.signing_team AS team
+                FROM contracts c
+                JOIN players p ON p.id = c.player_id
+                WHERE c.id = %s
+                """,
+                (exclude_contract_id,),
+            )
+            reference_row = cur.fetchone()
     finally:
         conn.close()
 
@@ -528,8 +545,47 @@ def get_comparable_contracts():
             for contract_id, first_name, last_name, position, cap_hit, start_season, end_season, contract_type, team in rows
         ]
 
+    all_season_rows = format_rows(all_rows)
+
+    if reference_row:
+        ref_first, ref_last, ref_position, ref_start, ref_end, ref_type, ref_team = reference_row
+        ref_base = {
+            "player_name": f"{ref_first} {ref_last}",
+            "position": ref_position,
+            "start_season": ref_start,
+            "end_season": ref_end,
+            "type": ref_type,
+            "team": ref_team,
+            "is_reference": True,
+        }
+
+        # The reference is shown at the value actually being compared:
+        # the converted cap hit in the reference season for the first
+        # tab, and the real contract's average cap percentage for the
+        # second. Its rank is where that value would sit among the
+        # (non-reference) field, using the same competition ranking.
+        ref_cap_hit_millions = round(target_cap_hit / 1_000_000, 4)
+        all_season_rows.append({
+            **ref_base,
+            "cap_hit_millions": ref_cap_hit_millions,
+            "rank": 1 + sum(1 for row in candidates if row[4] > target_cap_hit),
+        })
+        all_season_rows.sort(key=lambda r: r["cap_hit_millions"], reverse=True)
+
+        ref_avg_percentage = round(target_avg_cap_percentage, 2)
+        top_avg_percentage.append({
+            **ref_base,
+            "cap_hit_millions": ref_cap_hit_millions,
+            "avg_cap_percentage": ref_avg_percentage,
+            "rank": 1 + sum(
+                1 for r in formatted_avg_percentage_rows
+                if r["avg_cap_percentage"] > target_avg_cap_percentage
+            ),
+        })
+        top_avg_percentage.sort(key=lambda r: r["avg_cap_percentage"], reverse=True)
+
     return jsonify({
-        "all_season": format_rows(all_rows),
+        "all_season": all_season_rows,
         "avg_cap_percentage": top_avg_percentage,
     })
 

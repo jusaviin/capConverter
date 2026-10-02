@@ -824,7 +824,7 @@ function renderComparables() {
         
   rows.forEach((row) => {
     const item = document.createElement('div');
-    item.className = 'comparable-item';
+    item.className = 'comparable-item' + (row.is_reference ? ' reference' : '');
     const displayValue = activeComparablesTab === 'avg_cap_percentage'
     ? `${formatNumber(row.avg_cap_percentage)} %`
     : `${formatNumber(row.cap_hit_millions)} M$`;
