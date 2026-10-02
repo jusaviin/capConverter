@@ -23,3 +23,9 @@ python3 updateTables.py --tables cities
 ```
 
 ## Update the contracts table
+
+Write your update to a sql file following the example in `example_database_alter.sql`. Then run this command using
+
+```
+psql "DATABASE_URL" -f example_database_alter.sql
+```

@@ -759,3 +759,76 @@ select:disabled { background: #f3f4f6; color: #888; }
 }
 .quiz-pin-correct { background: #16a34a; }
 .quiz-pin-guess { background: #dc2626; }
+
+/* ==========================================================================
+   Contract List Mode (index.html)
+   ========================================================================== */
+
+.view-switch {
+  margin-bottom: 20px;
+}
+.comparables-section.list-section {
+  margin-top: 0;
+}
+.list-season-label {
+  margin-bottom: 12px;
+}
+.list-count {
+  margin: 0 0 8px;
+  font-size: 0.8rem;
+  color: #888;
+}
+/* Fixed-height box: JS sets the exact height so 10 rows are visible.
+   Rows are absolutely positioned inside the spacer (virtual scrolling),
+   and the scrollbar is always shown so it works as the "slider". */
+.contract-list-scroll {
+  position: relative;
+  overflow-y: scroll;
+  height: 614px;
+}
+.contract-list-scroll::-webkit-scrollbar {
+  width: 10px;
+}
+.contract-list-scroll::-webkit-scrollbar-track {
+  background: #f3f4f6;
+  border-radius: 5px;
+}
+.contract-list-scroll::-webkit-scrollbar-thumb {
+  background: #b6bcc6;
+  border-radius: 5px;
+}
+.contract-list-scroll::-webkit-scrollbar-thumb:hover {
+  background: #8f97a3;
+}
+.contract-list-spacer {
+  position: relative;
+  margin-right: 8px;
+}
+.comparable-item.list-item {
+  position: absolute;
+  left: 0;
+  right: 0;
+  box-sizing: border-box;
+  padding: 7px 12px;
+  overflow: hidden;
+}
+.comparable-item.list-item.loading {
+  color: #999;
+}
+.list-item .primary {
+  gap: 8px;
+}
+.list-item .list-item-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.list-item .list-item-value {
+  flex-shrink: 0;
+}
+.list-item .secondary {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

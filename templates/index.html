@@ -23,6 +23,13 @@
   This tool converts an NHL player's salary cap hit into what it would be if the contract had started in a chosen reference season and the average cap hit percentage stayed the same.
 </p>
 
+<div class="comparables-tabs view-switch" role="tablist" aria-label="Page mode">
+  <button type="button" class="comparables-tab active" id="mode-converter">Cap converter</button>
+  <button type="button" class="comparables-tab" id="mode-list">Contract list</button>
+</div>
+
+<div id="converter-mode">
+
 <div class="autofill-section">
   <h2>Autofill from a real contract</h2>
 
@@ -82,6 +89,34 @@
   <p class="data-disclaimer">Contract data provided by <a href="https://capwages.com">CapWages</a></p>
 </div>
 
+</div><!-- /#converter-mode -->
+
+<div id="list-mode" style="display: none;">
+  <div class="comparables-section list-section" id="list-section">
+    <h2>All contracts since the 2005-2006 season</h2>
+    <label class="list-season-label">
+      Season
+      <select id="list-season">
+        <option value="">All seasons</option>
+      </select>
+    </label>
+    <div class="comparables-tabs">
+      <button type="button" class="comparables-tab active" id="tab-list-cap-hit" data-mode="cap_hit">Cap hit</button>
+      <button type="button" class="comparables-tab" id="tab-list-avg" data-mode="avg_cap_percentage">Average cap percentage</button>
+    </div>
+    <div class="comparables-filter-tabs">
+      <button type="button" class="comparable-filter-btn" id="list-filter-forwards" data-pos="forwards">Forwards</button>
+      <button type="button" class="comparable-filter-btn" id="list-filter-defenders" data-pos="defenders">Defenders</button>
+      <button type="button" class="comparable-filter-btn" id="list-filter-goalies" data-pos="goalies">Goalies</button>
+    </div>
+    <p class="list-count" id="list-count"></p>
+    <div class="contract-list-scroll" id="list-scroll">
+      <div class="contract-list-spacer" id="list-spacer"></div>
+    </div>
+    <p class="data-disclaimer">Contract data provided by <a href="https://capwages.com">CapWages</a></p>
+  </div>
+</div>
+
 <h2>FAQ</h2>
 <div class="faq">
   <details>
@@ -138,6 +173,15 @@ The full calculation:
     <p>
       There is a gear icon to open settings in the top right corner of this page. This allows you to set your own percentage increase per season, or alternatively just edit the future cap hits by hand to whatever you want them to be!
     </p>
+  </details>
+  <details>
+      <summary>What are the different modes?</summary>
+      <p>
+      In the cap converter mode, you are able to convert a contract from one season to another season keeping the average percentage taken from the salary cap the same.
+      </p>
+      <p>
+      In the contract list mode, you can list the players with the largest absolute cap hit, and largest percentage of the salary cap from the salary cap era.
+      </p>
   </details>
   <details>
       <summary>I have some feedback! How can I contact you?</summary>
@@ -676,6 +720,7 @@ applyPercentageBtn.addEventListener('click', async () => {
     }
 
     renderCapTable(data);
+    onOverridesChanged();
     showModalFeedback(
       `Projected years ${data.editable_start}-${data.editable_end} updated using ${percentage}% growth.`,
       false
@@ -693,6 +738,7 @@ saveManualBtn.addEventListener('click', () => {
     currentOverrides[input.dataset.year] = parseFloat(input.value);
   });
 
+  onOverridesChanged();
   showModalFeedback('Manual cap values saved.', false);
 });
 
@@ -874,6 +920,251 @@ form.addEventListener('submit', async (e) => {
     errorBox.textContent = err.message;
     errorBox.style.display = 'block';
   }
+});
+// --- Contract list mode ---
+//
+// A fixed-height box that shows ten contracts at a time. The scrollbar
+// spans the *whole* list (a spacer div is sized to total rows), but only
+// the handful of rows currently in view are actually in the DOM; the
+// data behind them is fetched from the server one page at a time as the
+// user scrolls or drags the scrollbar.
+
+const LIST_VISIBLE_ROWS = 10;
+const LIST_ROW_HEIGHT = 56;   // px
+const LIST_ROW_GAP = 6;       // px
+const LIST_ROW_STEP = LIST_ROW_HEIGHT + LIST_ROW_GAP;
+const LIST_PAGE_SIZE = 50;
+
+const converterModeEl = document.getElementById('converter-mode');
+const listModeEl = document.getElementById('list-mode');
+const listScroll = document.getElementById('list-scroll');
+const listSpacer = document.getElementById('list-spacer');
+const listCount = document.getElementById('list-count');
+const listSeasonSelect = document.getElementById('list-season');
+
+listScroll.style.height = `${LIST_VISIBLE_ROWS * LIST_ROW_STEP - LIST_ROW_GAP}px`;
+
+const listState = {
+  tab: 'cap_hit',
+  position: null,
+  season: '',
+  total: null,      // null until the first page of the current query arrives
+  pages: new Map(), // page index -> array of rows
+  pending: new Set(),
+  failed: new Set(),
+  gen: 0,           // bumped on every new query so stale responses are dropped
+};
+let currentMode = 'converter';
+let listLoaded = false;
+let listSeasonsPopulated = false;
+let listOverridesKey = '';
+
+function escapeHtml(text) {
+  return String(text ?? '').replace(/[&<>"']/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  ));
+}
+
+async function populateListSeasons() {
+  if (listSeasonsPopulated) return;
+  if (knownMaxStartYear === null) {
+    await loadSalaryCapTable();
+  }
+  for (let year = knownMinYear; year <= knownMaxStartYear; year++) {
+    const option = document.createElement('option');
+    option.value = year;
+    option.textContent = seasonLabel(year);
+    listSeasonSelect.appendChild(option);
+  }
+  listSeasonsPopulated = true;
+}
+
+function listNeedsReload() {
+  if (!listLoaded) return true;
+  // Average cap percentage depends on the (possibly customized) salary
+  // cap projection, so it has to be re-ranked if that has changed.
+  return listState.tab === 'avg_cap_percentage'
+    && listOverridesKey !== JSON.stringify(currentOverrides);
+}
+
+async function setMode(mode) {
+  currentMode = mode;
+  const isList = mode === 'list';
+  document.getElementById('mode-converter').classList.toggle('active', !isList);
+  document.getElementById('mode-list').classList.toggle('active', isList);
+  converterModeEl.style.display = isList ? 'none' : '';
+  listModeEl.style.display = isList ? 'block' : 'none';
+
+  if (isList) {
+    try {
+      await populateListSeasons();
+    } catch (err) {
+      listCount.textContent = 'Could not load the season list.';
+      return;
+    }
+    if (currentMode !== 'list') return;
+    if (listNeedsReload()) {
+      reloadContractList();
+    } else {
+      renderListWindow();
+    }
+  }
+}
+
+function onOverridesChanged() {
+  if (currentMode === 'list' && listLoaded && listState.tab === 'avg_cap_percentage') {
+    reloadContractList();
+  }
+}
+
+function reloadContractList() {
+  listState.gen += 1;
+  listState.total = null;
+  listState.pages = new Map();
+  listState.pending = new Set();
+  listState.failed = new Set();
+  listLoaded = true;
+  listOverridesKey = JSON.stringify(currentOverrides);
+
+  listScroll.scrollTop = 0;
+  listSpacer.innerHTML = '';
+  listSpacer.style.height = '0px';
+  listCount.textContent = 'Loading...';
+  fetchListPage(0);
+}
+
+async function fetchListPage(page) {
+  const gen = listState.gen;
+  listState.pending.add(page);
+
+  const params = new URLSearchParams({
+    mode: listState.tab,
+    offset: page * LIST_PAGE_SIZE,
+    limit: LIST_PAGE_SIZE,
+  });
+  if (listState.season) params.set('season', listState.season);
+  if (listState.position) params.set('position_group', listState.position);
+  if (listState.tab === 'avg_cap_percentage') {
+    params.set('overrides', JSON.stringify(currentOverrides));
+  }
+
+  try {
+    const res = await fetch(`/api/contract-list?${params.toString()}`);
+    if (!res.ok) throw new Error('request failed');
+    const data = await res.json();
+    if (gen !== listState.gen) return;
+
+    listState.pages.set(page, data.rows);
+    if (listState.total === null) {
+      listState.total = data.total;
+      listSpacer.style.height = data.total > 0
+        ? `${data.total * LIST_ROW_STEP - LIST_ROW_GAP}px`
+        : '0px';
+      listCount.textContent = data.total === 0
+        ? 'No contracts found.'
+        : `${formatNumber(data.total, 0)} contract${data.total === 1 ? '' : 's'}`;
+    }
+  } catch (err) {
+    if (gen !== listState.gen) return;
+    listState.failed.add(page);
+    if (listState.total === null) {
+      listCount.textContent = 'Could not load contracts.';
+    }
+  } finally {
+    if (gen === listState.gen) listState.pending.delete(page);
+  }
+
+  if (gen === listState.gen) renderListWindow();
+}
+
+function buildListItem(index, row) {
+  const item = document.createElement('div');
+  item.className = 'comparable-item list-item';
+  item.style.top = `${index * LIST_ROW_STEP}px`;
+  item.style.height = `${LIST_ROW_HEIGHT}px`;
+
+  if (!row) {
+    item.classList.add('loading');
+    item.innerHTML = '<div class="primary"><span>Loading...</span></div>';
+    return item;
+  }
+
+  const displayValue = listState.tab === 'avg_cap_percentage'
+    ? `${formatNumber(row.avg_cap_percentage)} %`
+    : `${formatNumber(row.cap_hit_millions)} M$`;
+
+  item.innerHTML = `
+    <div class="primary">
+      <span class="list-item-name">${row.rank != null ? `<span class="comparable-rank">#${row.rank}</span> ` : ''}${escapeHtml(row.player_name)}${row.position ? ` &middot; ${escapeHtml(row.position)}` : ''}</span>
+      <span class="list-item-value">${displayValue}</span>
+    </div>
+    <div class="secondary">${row.team ? `${escapeHtml(row.team)} &middot; ` : ''}${escapeHtml(row.type)} &middot; ${seasonLabel(row.start_season)} to ${seasonLabel(row.end_season)}</div>
+  `;
+  return item;
+}
+
+function renderListWindow() {
+  const total = listState.total;
+  if (!total) {
+    listSpacer.innerHTML = '';
+    return;
+  }
+
+  const top = listScroll.scrollTop;
+  const viewHeight = listScroll.clientHeight;
+  const first = Math.max(0, Math.floor(top / LIST_ROW_STEP) - 2);
+  const last = Math.min(total - 1, Math.ceil((top + viewHeight) / LIST_ROW_STEP) + 2);
+
+  const fragment = document.createDocumentFragment();
+  for (let i = first; i <= last; i++) {
+    const page = Math.floor(i / LIST_PAGE_SIZE);
+    const rows = listState.pages.get(page);
+    fragment.appendChild(buildListItem(i, rows ? rows[i - page * LIST_PAGE_SIZE] : null));
+  }
+  listSpacer.replaceChildren(fragment);
+
+  // Fetch whichever pages the visible rows need.
+  for (let page = Math.floor(first / LIST_PAGE_SIZE); page <= Math.floor(last / LIST_PAGE_SIZE); page++) {
+    if (!listState.pages.has(page) && !listState.pending.has(page) && !listState.failed.has(page)) {
+      fetchListPage(page);
+    }
+  }
+}
+
+listScroll.addEventListener('scroll', renderListWindow);
+
+document.getElementById('mode-converter').addEventListener('click', () => setMode('converter'));
+document.getElementById('mode-list').addEventListener('click', () => setMode('list'));
+
+listSeasonSelect.addEventListener('change', () => {
+  listState.season = listSeasonSelect.value;
+  reloadContractList();
+});
+
+[['tab-list-cap-hit', 'cap_hit'], ['tab-list-avg', 'avg_cap_percentage']].forEach(([id, tab]) => {
+  document.getElementById(id).addEventListener('click', () => {
+    if (listState.tab === tab) return;
+    listState.tab = tab;
+    document.getElementById('tab-list-cap-hit').classList.toggle('active', tab === 'cap_hit');
+    document.getElementById('tab-list-avg').classList.toggle('active', tab === 'avg_cap_percentage');
+    reloadContractList();
+  });
+});
+
+const listFilterButtons = {
+  forwards: document.getElementById('list-filter-forwards'),
+  defenders: document.getElementById('list-filter-defenders'),
+  goalies: document.getElementById('list-filter-goalies'),
+};
+Object.entries(listFilterButtons).forEach(([category, button]) => {
+  button.addEventListener('click', () => {
+    // Clicking the active filter turns it off again (= all positions).
+    listState.position = listState.position === category ? null : category;
+    Object.entries(listFilterButtons).forEach(([c, b]) => {
+      b.classList.toggle('active', listState.position === c);
+    });
+    reloadContractList();
+  });
 });
 </script>
 

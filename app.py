@@ -1,5 +1,6 @@
 import json
 import os
+import time
 import uuid
 from datetime import datetime, timezone
 
@@ -531,6 +532,212 @@ def get_comparable_contracts():
         "all_season": format_rows(all_rows),
         "avg_cap_percentage": top_avg_percentage,
     })
+
+# --- Contract list (browse every contract since 2005-2006) -----------
+#
+# Backs the "Contract list" mode on the converter page. The page shows
+# ten rows at a time in a scroll box and asks for more rows (a "page"
+# of them) as the user scrolls, so this endpoint is offset/limit based
+# and also reports the total number of matching contracts.
+
+CONTRACT_LIST_MAX_LIMIT = 100
+CONTRACT_LIST_CACHE_TTL_SECONDS = 300
+CONTRACT_LIST_CACHE_MAX_ENTRIES = 32
+
+# Average-cap-percentage rankings have to be computed in Python over
+# every matching contract (they depend on the per-year salary cap,
+# including the user's own projection overrides), and the frontend
+# fetches them one page at a time -- so the fully ranked list is kept
+# briefly per (season, position, overrides) instead of being rebuilt
+# for every page. Maps key -> (timestamp, ranked_rows).
+_contract_list_cache = {}
+
+
+def _position_clause(position_group):
+    """SQL fragment for the forwards/defenders/goalies filter (same rules
+    as /api/comparable-contracts). Only fixed literals are returned."""
+    if position_group == "forwards":
+        return " AND p.position IN ('C', 'R', 'L')"
+    if position_group == "defenders":
+        return " AND p.position = 'D'"
+    if position_group == "goalies":
+        return " AND p.position = 'G'"
+    return ""
+
+
+def _contract_list_row(contract_id, first_name, last_name, position, cap_hit,
+                       start_season, end_season, contract_type, team, rank,
+                       avg_cap_percentage):
+    return {
+        "player_name": f"{first_name} {last_name}",
+        "position": position,
+        "cap_hit_millions": round(cap_hit / 1_000_000, 4),
+        "avg_cap_percentage": round(avg_cap_percentage, 2) if avg_cap_percentage is not None else None,
+        "start_season": start_season,
+        "end_season": end_season,
+        "type": contract_type,
+        "team": team,
+        "rank": rank,
+    }
+
+
+@app.route("/api/contract-list", methods=["GET"])
+def get_contract_list():
+    mode = request.args.get("mode", "cap_hit")
+    if mode not in ("cap_hit", "avg_cap_percentage"):
+        return jsonify({"error": "mode must be cap_hit or avg_cap_percentage."}), 400
+
+    # Optional season: blank/missing means "all seasons".
+    season = None
+    season_raw = request.args.get("season")
+    if season_raw not in (None, ""):
+        try:
+            season = int(season_raw)
+        except ValueError:
+            return jsonify({"error": "season must be an integer."}), 400
+        if season < 2005:
+            return jsonify({"error": "season must be 2005 or later."}), 400
+
+    offset = max(0, request.args.get("offset", 0, type=int))
+    limit = min(max(1, request.args.get("limit", 50, type=int)), CONTRACT_LIST_MAX_LIMIT)
+    position_group = request.args.get("position_group")
+
+    # Salary cap era only. With a season selected, this is every
+    # contract that was active in that season -- same rule as the
+    # "Under contract that season" comparables.
+    season_clause = (
+        " AND c.start_season <= %(season)s AND c.end_season >= %(season)s"
+        if season is not None else ""
+    )
+    where_sql = (
+        "c.cap_hit IS NOT NULL"
+        " AND c.start_season IS NOT NULL"
+        " AND c.end_season IS NOT NULL"
+        " AND c.start_season >= 2005"
+        f"{season_clause}{_position_clause(position_group)}"
+    )
+    params = {"season": season, "limit": limit, "offset": offset}
+
+    if mode == "cap_hit":
+        conn = get_connection()
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                f"""
+                SELECT id, first_name, last_name, position, cap_hit,
+                       start_season, end_season, type, team, rnk, total
+                FROM (
+                    SELECT c.id, p.first_name, p.last_name, p.position, c.cap_hit,
+                           c.start_season, c.end_season, c.type,
+                           c.signing_team AS team,
+                           RANK() OVER (ORDER BY c.cap_hit DESC) AS rnk,
+                           COUNT(*) OVER () AS total
+                    FROM contracts c
+                    JOIN players p ON p.id = c.player_id
+                    WHERE {where_sql}
+                ) ranked
+                ORDER BY rnk, id
+                LIMIT %(limit)s OFFSET %(offset)s
+                """,
+                params,
+            )
+            rows = cur.fetchall()
+        finally:
+            conn.close()
+
+        total = rows[0][10] if rows else 0
+        return jsonify({
+            "total": total,
+            "rows": [
+                _contract_list_row(r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], r[8], r[9], None)
+                for r in rows
+            ],
+        })
+
+    # --- mode == "avg_cap_percentage" ---
+    parsed_overrides = {}
+    overrides_raw = request.args.get("overrides")
+    if overrides_raw:
+        try:
+            overrides_dict = json.loads(overrides_raw)
+            if isinstance(overrides_dict, dict) and len(overrides_dict) <= 8:
+                parsed_overrides = {int(k): float(v) * 1_000_000 for k, v in overrides_dict.items()}
+        except (ValueError, TypeError):
+            pass
+
+    cache_key = (season, position_group, tuple(sorted(parsed_overrides.items())))
+    now = time.time()
+    cached = _contract_list_cache.get(cache_key)
+    if cached and now - cached[0] < CONTRACT_LIST_CACHE_TTL_SECONDS:
+        ranked_rows = cached[1]
+    else:
+        cap_finder = salary_cap_finder(overrides=parsed_overrides)
+
+        conn = get_connection()
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                f"""
+                SELECT c.id, p.first_name, p.last_name, p.position, c.cap_hit,
+                       c.start_season, c.end_season, c.type,
+                       c.signing_team AS team
+                FROM contracts c
+                JOIN players p ON p.id = c.player_id
+                WHERE {where_sql}
+                """,
+                params,
+            )
+            candidates = cur.fetchall()
+        finally:
+            conn.close()
+
+        entries = []
+        for (contract_id, first_name, last_name, position, cap_hit,
+             start_season, end_season, contract_type, team) in candidates:
+            duration = end_season - start_season + 1
+            if duration <= 0:
+                continue
+
+            fractions_sum = 0
+            valid = True
+            for yr in range(start_season, end_season + 1):
+                cap_val = cap_finder.get_salary_cap(yr)
+                if cap_val <= 0:
+                    valid = False
+                    break
+                fractions_sum += cap_hit / cap_val
+            if not valid:
+                continue
+
+            avg = (fractions_sum / duration) * 100
+            entries.append((contract_id, avg, first_name, last_name, position,
+                            cap_hit, start_season, end_season, contract_type, team))
+
+        # Highest first; contract id breaks ties so paging is stable.
+        entries.sort(key=lambda e: (-e[1], e[0]))
+
+        # Same "competition" ranking (1, 2, 2, 4, ...) as the comparables.
+        ranked_rows = []
+        previous_avg = None
+        current_rank = 0
+        for index, e in enumerate(entries, start=1):
+            if e[1] != previous_avg:
+                current_rank = index
+                previous_avg = e[1]
+            ranked_rows.append(_contract_list_row(
+                e[0], e[2], e[3], e[4], e[5], e[6], e[7], e[8], e[9], current_rank, e[1]
+            ))
+
+        if len(_contract_list_cache) >= CONTRACT_LIST_CACHE_MAX_ENTRIES:
+            oldest_key = min(_contract_list_cache, key=lambda k: _contract_list_cache[k][0])
+            del _contract_list_cache[oldest_key]
+        _contract_list_cache[cache_key] = (now, ranked_rows)
+
+    return jsonify({
+        "total": len(ranked_rows),
+        "rows": ranked_rows[offset:offset + limit],
+    })
+
 
 @app.route("/api/convert", methods=["POST"])
 def convert():
