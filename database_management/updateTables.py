@@ -309,9 +309,26 @@ def main():
     
         # Update the database for all the player slugs available
         updateContracts(connection, cursor, cap_wages_reader)
+        
+        # Run sanity check for cap hits in the table
+        sql_command = """
+            UPDATE contracts
+            SET cap_hit = total_value
+            WHERE type ILIKE '%%entry%%'
+                AND cap_hit IS NOT NULL
+                AND total_value IS NOT NULL
+                AND cap_hit > total_value
+                AND start_season = end_season;
+        """
+        try:
+            cursor.execute(sql_command)
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
     
     # TODO: Update all other types of tables
-
+    
     # Close the connection
     connection.close()
         
