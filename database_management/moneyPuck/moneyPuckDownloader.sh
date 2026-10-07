@@ -9,7 +9,8 @@ FIRSTAVAILABLEYEAR=2008
 # Usage instructions for the script
 usage() {
   echo "Usage of the script:"
-  echo "$0 [-r] [-p] [-b] [-f YEAR] [-l YEAR]"
+  echo "$0 [-h] [-r] [-p] [-b] [-f YEAR] [-l YEAR]"
+  echo "-h, --help      = Print this usage information"
   echo "-r, --regular   = Download regular season csv files"
   echo "-p, --playoffs  = Download playoff csv files"
   echo "-b, --biography = Download the player biography csv file (playerBiography.csv)"
@@ -33,6 +34,10 @@ LASTYEAR=${CURRENTYEAR}
 # Read the optional arguments (short and long forms)
 while [ "$#" -gt 0 ]; do
   case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
     -r|--regular)
       REGULAR=true
       shift
