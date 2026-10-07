@@ -14307,5 +14307,45 @@
         "country": "United States",
         "state": "California",
         "state_code": "CA"
+    },
+    "Valmiera": {
+        "coordinates": [
+            57.5389148,
+            25.4261688
+        ],
+        "nameLocal": "Valmiera",
+        "nameEnglish": "Valmiera",
+        "country": "Latvia"
+    },
+    "Deerfield Beach, FL": {
+        "coordinates": [
+            26.318342,
+            -80.0996306
+        ],
+        "nameLocal": "Deerfield Beach",
+        "nameEnglish": "Deerfield Beach",
+        "country": "United States",
+        "state": "Florida",
+        "state_code": "FL"
+    },
+    "Solleftea": {
+        "coordinates": [
+            63.383333,
+            16.916667
+        ],
+        "nameLocal": "Sollefteå kommun",
+        "nameEnglish": "Sollefteå kommun",
+        "country": "Sweden"
+    },
+    "Varennes, QC": {
+        "coordinates": [
+            45.6834691,
+            -73.4362737
+        ],
+        "nameLocal": "Varennes",
+        "nameEnglish": "Varennes",
+        "country": "Canada",
+        "state": "Quebec",
+        "state_code": "QC"
     }
 }

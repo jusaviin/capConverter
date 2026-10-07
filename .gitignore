@@ -4,6 +4,10 @@ __pycache__
 capConverterEnvironment
 .env
 todo.txt
+.ipynb_checkpoints
 
 # The docker image is used test things locally. We do not need this on server
 docker-compose-postgres.yml
+
+# Do not share MoneyPuck csv files, these can be downloaded from MoneyPuck website
+database_management/moneyPuck/*.csv

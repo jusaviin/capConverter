@@ -129,7 +129,7 @@ def main():
         print("Finding cities for all players for {} season".format(currentSeason))
         
         # Find all the teams that were playing in the given season
-        teams = client.teams.teams(date="{}-01-30".format(currentSeason[-4:]))
+        teams = client.teams.teams(date="{}-10-01".format(currentSeason[:4]))
 
         # Loop over teams that played in the NHL the given season
         for team in teams:

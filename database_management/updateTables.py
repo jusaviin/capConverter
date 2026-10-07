@@ -2,13 +2,17 @@
 
 # Required imports
 import argparse
+import csv
+import logging
 import psycopg2
 import json
 import time
 import requests
 from database_helper import get_connection
 from capWagesReader import CapWagesReader
-from helperFunctions import team_formatter
+from nhlpy import NHLClient
+import country_converter as coco
+from helperFunctions import team_formatter, cityFormatter, getAccentedName
  
 def updateCities(connection, cursor, cityFileName):
     """ 
@@ -64,6 +68,206 @@ def updateCities(connection, cursor, cityFileName):
 
     except FileNotFoundError:
         print("Could not open the file {}. Will not fill the cities table.".format(cityFileName))
+
+
+def updatePlayers(connection, cursor, nhl_client, first_season, last_season):
+    """
+    Function for updating the players table in the database
+    All the players from NHL API that are included in season rosters for teams are included
+    New players are inserted, and information of existing players is updated if it has changed
+    Notice that player stats are in another table
+
+    Seasons are processed from the newest to the oldest, and each player is only handled
+    once (from the newest season they appear in), so the most recent information wins.
+
+    Arguments:
+        connection = Connection object to PostgreSQL database
+        cursor = cursor object to PostgreSQL database
+        nhl_client = Client connected to NHL API to read team information
+        first_season = Newest season to read, given as the start year (2025 = season 2025-2026)
+        last_season = Oldest season to read, given as the start year
+    """
+
+    sql_command = """
+        INSERT INTO players (
+            id, first_name, last_name, birth_city, birth_date, position,
+            handedness, headshot, height, weight
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (id) DO UPDATE SET
+            first_name = EXCLUDED.first_name,
+            last_name = EXCLUDED.last_name,
+            birth_city = EXCLUDED.birth_city,
+            birth_date = EXCLUDED.birth_date,
+            position = EXCLUDED.position,
+            handedness = EXCLUDED.handedness,
+            headshot = EXCLUDED.headshot,
+            height = EXCLUDED.height,
+            weight = EXCLUDED.weight
+        WHERE
+            players.first_name  IS DISTINCT FROM EXCLUDED.first_name OR
+            players.last_name   IS DISTINCT FROM EXCLUDED.last_name OR
+            players.birth_city  IS DISTINCT FROM EXCLUDED.birth_city OR
+            players.birth_date  IS DISTINCT FROM EXCLUDED.birth_date OR
+            players.position    IS DISTINCT FROM EXCLUDED.position OR
+            players.handedness  IS DISTINCT FROM EXCLUDED.handedness OR
+            players.headshot    IS DISTINCT FROM EXCLUDED.headshot OR
+            players.height      IS DISTINCT FROM EXCLUDED.height OR
+            players.weight      IS DISTINCT FROM EXCLUDED.weight;
+    """
+
+    # Pre-fetch valid city codes so that a birth city missing from the cities
+    # table does not violate the foreign key and abort the whole batch
+    cursor.execute("SELECT name_NHL_API FROM cities")
+    valid_cities = {row[0] for row in cursor.fetchall()}
+
+    # Create a formatter class for city names
+    cityHelper = cityFormatter()
+
+    # Avoid handling the same player multiple times
+    handled_players = set()
+    unknown_cities = []
+
+    for season in range(first_season, last_season - 1, -1):
+
+        seasonString = "{}{}".format(season, season + 1)
+        print("Updating players table for season " + seasonString)
+        
+        # Now all the teams are listed for all dates for some reason
+        # Pick a date that gives a list of all teams
+        date_check = "{}-01-30".format(season + 1)
+        if season == 2026:
+            date_check = "2026-10-01"
+
+        teams = nhl_client.teams.teams(date=date_check)
+        time.sleep(1)  # Do not overwhelm NHL API with excessive requests
+
+        for team in teams:
+
+            # Get the end-of-season roster for the studied team
+            roster = nhl_client.teams.team_roster(team_abbr=team["abbr"], season=seasonString)
+            time.sleep(1)  # Do not overwhelm NHL API with excessive requests
+
+            rows = []
+            for position_group in roster:
+                for player in roster[position_group]:
+
+                    if player["id"] in handled_players:
+                        continue
+                    handled_players.add(player["id"])
+
+                    birth_city, _, _ = cityHelper.formatCityName(player)
+
+                    # Missing city information is stored as NULL
+                    if birth_city not in valid_cities:
+                        unknown_cities.append((player["id"], birth_city))
+                        birth_city = None
+
+                    rows.append((
+                        player["id"],
+                        getAccentedName(player, "firstName"),
+                        getAccentedName(player, "lastName"),
+                        birth_city,
+                        player.get("birthDate"),
+                        player.get("positionCode"),
+                        player.get("shootsCatches"),
+                        player.get("headshot"),
+                        player.get("heightInCentimeters"),
+                        player.get("weightInKilograms"),
+                    ))
+
+            # Commit the changes one team at a time
+            if rows:
+                cursor.executemany(sql_command, rows)
+                connection.commit()
+                
+    # After all the information from NHL API is 
+
+    if unknown_cities:
+        unknown_log_path = "unknown_birth_cities.log"
+        with open(unknown_log_path, "w", encoding='utf-8') as f:
+            f.write(f"{len(unknown_cities)} player(s) had a birth city missing from the cities table (stored as NULL):\n")
+            for playerID, city in unknown_cities:
+                f.write(f"player_id={playerID} birth_city={city}\n")
+        print(f"{len(unknown_cities)} player(s) with unknown birth city -- see {unknown_log_path} for details")
+
+
+def updateNationalities(connection, cursor, nationalityFileName):
+    """
+    Function for filling the nationality column of the players table from a csv file
+    NHL API does not contain nationality information, so it comes from a separate file
+    Only players that already exist in the players table are updated; no new players are inserted
+    Rows with an empty nationality are skipped, so existing values are never overwritten with NULL
+    The csv has three letter country codes, which are stored as English country names (CAN -> Canada).
+    Most codes are ISO 3166-1 alpha-3, but some are IOC codes (DEN, SUI, LAT, RSA), so both are handled.
+
+    Arguments:
+        connection = Connection object to PostgreSQL database
+        cursor = cursor object to PostgreSQL database
+        nationalityFileName = csv file with columns playerId and nationality
+    """
+    try:
+        with open(nationalityFileName, "r", encoding="utf-8-sig", newline="") as f:
+            print("Updating player nationalities from file {}.".format(nationalityFileName))
+
+            # Pre-fetch the players that are in the table, so that we only update those
+            cursor.execute("SELECT id FROM players")
+            valid_player_ids = {row[0] for row in cursor.fetchall()}
+
+            # Codes that are valid ISO3 are read as ISO3. Anything else is read as an IOC
+            # code (DEN, SUI, LAT, RSA, GER, ...). One source is not enough for the whole
+            # file, since e.g. DEU is only valid in ISO3 and DEN is only valid in IOC.
+            logging.getLogger("country_converter").setLevel(logging.ERROR)
+            converter = coco.CountryConverter()
+            valid_iso3 = set(converter.data["ISO3"].dropna())
+            code_cache = {}
+
+            rows = []
+            not_in_table = 0
+            unknown_codes = set()
+            missing_nationality = 0
+
+            for entry in csv.DictReader(f):
+                playerID = int(entry["playerId"])
+                nationality = (entry["nationality"] or "").strip().upper()
+
+                if playerID not in valid_player_ids:
+                    not_in_table += 1
+                    continue
+
+                if not nationality:
+                    missing_nationality += 1
+                    continue
+
+                if nationality not in code_cache:
+                    source = "ISO3" if nationality in valid_iso3 else "IOC"
+                    countryName = coco.convert(names=nationality, src=source, to="name_short")
+                    code_cache[nationality] = None if countryName == "not found" else countryName
+                if code_cache[nationality] is None:
+                    unknown_codes.add(nationality)
+                    continue
+                nationality = code_cache[nationality]
+
+                rows.append((nationality, playerID, nationality))
+
+        # Only touch rows where the value actually changes
+        sql_command = """
+            UPDATE players
+            SET nationality = %s
+            WHERE id = %s
+                AND nationality IS DISTINCT FROM %s;
+        """
+
+        cursor.executemany(sql_command, rows)
+        connection.commit()
+
+        print("Nationality given for {} player(s) in the file that are in the players table.".format(len(rows)))
+        print("Skipped {} player(s) not in the players table and {} player(s) with no nationality in the file.".format(
+            not_in_table, missing_nationality))
+        if unknown_codes:
+            print("Skipped players with unrecognized nationality code(s): {}".format(sorted(unknown_codes)))
+
+    except FileNotFoundError:
+        print("Could not open the file {}. Will not update the nationalities.".format(nationalityFileName))
 
 
 def updateContracts(connection, cursor, cap_wages_reader):
@@ -251,7 +455,7 @@ def main():
     """
     
     # Define all tables that are available in the database
-    all_tables = ["players", "teams", "cities", "team_season_stats", "skater_season_stats", "goalie_season_stats", "contracts", "seasons"]
+    all_tables = ["players", "nationalities", "teams", "cities", "team_season_stats", "skater_season_stats", "goalie_season_stats", "contracts", "seasons"]
     
     # Read the command line configuration
     parser = argparse.ArgumentParser(
@@ -273,6 +477,38 @@ def main():
         default="nhlPlayerHomeTownsFrom2008To2026.json",
         help=(
             "JSON file containing the player birth city information"
+        ),
+    )
+    parser.add_argument(
+        "--slugfile",
+        type=str,
+        default=None,
+        help=(
+            "Text file with slugs for players whose contracts are updated."
+        ),
+    )
+    parser.add_argument(
+        "--newestseason",
+        type=int,
+        default=2026,
+        help=(
+            "Newest season (start year, 2026 = 2026-2027) read when updating the players table"
+        ),
+    )
+    parser.add_argument(
+        "--oldestseason",
+        type=int,
+        default=2026,
+        help=(
+            "Oldest season (start year) read when updating the players table"
+        ),
+    )
+    parser.add_argument(
+        "--nationalityfile",
+        type=str,
+        default="moneyPuck/playerBiography.csv",
+        help=(
+            "CSV file containing nationalities for the players."
         ),
     )
     parser.add_argument(
@@ -299,13 +535,31 @@ def main():
     if "cities" in tables_to_update:
         updateCities(connection, cursor, args.cityjson)
         
+    # Update the players table
+    # This is done after cities (birth_city refers to it) and before contracts (player_id refers to players)
+    if "players" in tables_to_update:
+        if args.oldestseason > args.newestseason:
+            parser.error("--oldestseason must not be later than --newestseason")
+        nhl_client = NHLClient()
+        updatePlayers(connection, cursor, nhl_client, args.newestseason, args.oldestseason)
+        
+    # Update player nationalities in players table
+    if "nationalities" in tables_to_update:
+        updateNationalities(connection, cursor, args.nationalityfile)
+
     # Update the constracts table
     if "contracts" in tables_to_update:
     
-        # Create a CapWagerReader and find the player slugs to be updated to the database
+        # Create a CapWagerReader and initialize it with API key
         cap_wages_reader = CapWagesReader()
         cap_wages_reader.set_dotenv_API_key("API_KEY")
-        cap_wages_reader.find_all_player_slugs()
+        
+        # If slugfile is given, only update those players
+        # Otherwise go through all player contracts
+        if args.slugfile == None:
+            cap_wages_reader.find_all_player_slugs()
+        else:
+            cap_wages_reader.read_slugs_from_file(args.slugfile)
     
         # Update the database for all the player slugs available
         updateContracts(connection, cursor, cap_wages_reader)

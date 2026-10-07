@@ -39,6 +39,7 @@ CREATE TABLE players
     first_name TEXT NOT NULL,
     last_name TEXT NOT NULL,
     birth_city TEXT NOT NULL,
+    nationality TEXT,
     birth_date DATE,
     position CHAR(1),
     handedness CHAR(1),
