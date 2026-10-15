@@ -4,7 +4,11 @@
 import argparse
 import csv
 import logging
+import os
+import pandas
 import psycopg2
+from psycopg2 import sql
+from psycopg2.extras import execute_values
 import json
 import time
 import requests
@@ -12,8 +16,15 @@ from database_helper import get_connection
 from capWagesReader import CapWagesReader
 from nhlpy import NHLClient
 import country_converter as coco
-from helperFunctions import team_formatter, cityFormatter, getAccentedName
- 
+from helperFunctions import team_formatter, cityFormatter, getAccentedName, get_unique_player_ids
+from manualDataEntry import NHLSeasonData, NHLTeamData
+
+# MoneyPuck has inconsistent team names. Transform all to follow NHL API convention.
+moneyPuckDecoder = {"L.A": "LAK",
+                    "N.J": "NJD",
+                    "T.B": "TBL",
+                    "S.J": "SJS"}
+
 def updateCities(connection, cursor, cityFileName):
     """ 
     Function for updating the cities table in the database
@@ -70,7 +81,160 @@ def updateCities(connection, cursor, cityFileName):
         print("Could not open the file {}. Will not fill the cities table.".format(cityFileName))
 
 
-def updatePlayers(connection, cursor, nhl_client, first_season, last_season):
+def updateSeasons(connection, cursor):
+    """
+    Function for updating the seasons table in the database
+    The season information (salary cap and cap floor) is collected manually, so it is read from NHLSeasonData
+    New seasons are inserted, and information of existing seasons is updated if it has changed
+
+    Arguments:
+        connection = Connection object to PostgreSQL database
+        cursor = cursor object to PostgreSQL database
+    """
+
+    # Start by creating an object that finds manually collected season data
+    data_provider = NHLSeasonData()
+
+    # Find all the seasons we have salary cap data about
+    all_seasons = data_provider.get_season_list()
+
+    print("Updating the seasons table for {} season(s).".format(len(all_seasons)))
+
+    sql_command = """
+        INSERT INTO seasons (season, salary_cap, cap_floor)
+        VALUES (%s, %s, %s)
+        ON CONFLICT (season) DO UPDATE SET
+            salary_cap = EXCLUDED.salary_cap,
+            cap_floor = EXCLUDED.cap_floor
+        WHERE
+            seasons.salary_cap IS DISTINCT FROM EXCLUDED.salary_cap OR
+            seasons.cap_floor  IS DISTINCT FROM EXCLUDED.cap_floor;
+    """
+
+    rows = []
+    for season in all_seasons:
+        rows.append((
+            season,
+            data_provider.get_salary_cap(season),
+            data_provider.get_cap_floor(season),
+        ))
+
+    try:
+        cursor.executemany(sql_command, rows)
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+
+
+def updateTeams(connection, cursor, nhl_client, first_season, last_season):
+    """
+    Function for updating the teams table in the database
+    The team names and logos are read from NHL API, and the city and arena information
+    is collected manually, so it is read from NHLTeamData
+    New teams are inserted, and information of existing teams is updated if it has changed
+
+    All the teams that have played in NHL between 2008 and the current date are included.
+    Each team is handled only once, using the information from the newest date it appears in,
+    so the most recent information wins.
+
+    Arguments:
+        connection = Connection object to PostgreSQL database
+        cursor = cursor object to PostgreSQL database
+        nhl_client = Client connected to NHL API to read team information
+        first_season = Newest season to read, given as the start year (2025 = season 2025-2026)
+        last_season = Oldest season to read, given as the start year
+    """
+
+    # Start by creating an object that finds manually collected data
+    data_provider = NHLTeamData()
+
+    sql_command = """
+        INSERT INTO teams (
+            code, name, city, logo, arena, arena_capacity, arena_latitude, arena_longitude
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (code) DO UPDATE SET
+            name = EXCLUDED.name,
+            city = EXCLUDED.city,
+            logo = EXCLUDED.logo,
+            arena = EXCLUDED.arena,
+            arena_capacity = EXCLUDED.arena_capacity,
+            arena_latitude = EXCLUDED.arena_latitude,
+            arena_longitude = EXCLUDED.arena_longitude
+        WHERE
+            teams.name             IS DISTINCT FROM EXCLUDED.name OR
+            teams.city             IS DISTINCT FROM EXCLUDED.city OR
+            teams.logo             IS DISTINCT FROM EXCLUDED.logo OR
+            teams.arena            IS DISTINCT FROM EXCLUDED.arena OR
+            teams.arena_capacity   IS DISTINCT FROM EXCLUDED.arena_capacity OR
+            teams.arena_latitude   IS DISTINCT FROM EXCLUDED.arena_latitude OR
+            teams.arena_longitude  IS DISTINCT FROM EXCLUDED.arena_longitude;
+    """
+
+    # Pre-fetch valid city codes. The city column is NOT NULL and refers to the cities table,
+    # so a team with a city missing from there would abort the whole batch
+    cursor.execute("SELECT name_NHL_API FROM cities")
+    valid_cities = {row[0] for row in cursor.fetchall()}
+
+    handled_teams = set()
+    skipped_teams = []
+    rows = []
+    
+    for season in range(first_season, last_season - 1, -1):
+
+        # Not all the teams are listed for all dates for some reason
+        # Pick a date that gives a list of all teams
+        date_check = "{}-01-30".format(season + 1)
+        if season == 2026:
+            date_check = "2026-10-01"
+
+        teams = nhl_client.teams.teams(date=date_check)
+        time.sleep(1)  # Do not overwhelm NHL API with excessive requests
+
+        for team in teams:
+
+            # Do not handle the same team again
+            if team["abbr"] in handled_teams:
+                continue
+            handled_teams.add(team["abbr"])
+
+            # City cannot be NULL, so teams whose city is not in the cities table are skipped
+            city = data_provider.get_city(team["abbr"])
+            if city not in valid_cities:
+                skipped_teams.append((team["abbr"], city))
+                continue
+
+            rows.append((
+                team["abbr"],
+                team["name"],
+                city,
+                team["logo"],
+                data_provider.get_arena(team["abbr"]),
+                data_provider.get_arena_capacity(team["abbr"]),
+                data_provider.get_arena_latitude(team["abbr"]),
+                data_provider.get_arena_longitude(team["abbr"]),
+            ))
+
+    print("Updating the teams table for {} team(s).".format(len(rows)))
+
+    # Commit everything in one transaction after the full list has been gone through
+    try:
+        cursor.executemany(sql_command, rows)
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+
+    if skipped_teams:
+        skipped_log_path = "skipped_teams.log"
+        with open(skipped_log_path, "w", encoding='utf-8') as f:
+            f.write(f"Skipped {len(skipped_teams)} team(s) with a city missing from the cities table:\n")
+            for code, city in skipped_teams:
+                f.write(f"team={code} city={city}\n")
+        print(f"Skipped {len(skipped_teams)} team(s) -- see {skipped_log_path} for details")
+
+
+def updatePlayers(connection, cursor, nhl_client, first_season, last_season, id_file = None):
     """
     Function for updating the players table in the database
     All the players from NHL API that are included in season rosters for teams are included
@@ -86,6 +250,7 @@ def updatePlayers(connection, cursor, nhl_client, first_season, last_season):
         nhl_client = Client connected to NHL API to read team information
         first_season = Newest season to read, given as the start year (2025 = season 2025-2026)
         last_season = Oldest season to read, given as the start year
+        id_file = If given, only find the information for these specific players
     """
 
     sql_command = """
@@ -127,61 +292,100 @@ def updatePlayers(connection, cursor, nhl_client, first_season, last_season):
     handled_players = set()
     unknown_cities = []
 
-    for season in range(first_season, last_season - 1, -1):
+    if id_file == None:
+        # If there is no ID file, use the reqular team queries
 
-        seasonString = "{}{}".format(season, season + 1)
-        print("Updating players table for season " + seasonString)
+        for season in range(first_season, last_season - 1, -1):
+
+            seasonString = "{}{}".format(season, season + 1)
+            print("Updating players table for season " + seasonString)
         
-        # Now all the teams are listed for all dates for some reason
-        # Pick a date that gives a list of all teams
-        date_check = "{}-01-30".format(season + 1)
-        if season == 2026:
-            date_check = "2026-10-01"
+            # Not all the teams are listed for all dates for some reason
+            # Pick a date that gives a list of all teams
+            date_check = "{}-01-30".format(season + 1)
+            if season == 2026:
+                date_check = "2026-10-01"
 
-        teams = nhl_client.teams.teams(date=date_check)
-        time.sleep(1)  # Do not overwhelm NHL API with excessive requests
-
-        for team in teams:
-
-            # Get the end-of-season roster for the studied team
-            roster = nhl_client.teams.team_roster(team_abbr=team["abbr"], season=seasonString)
+            teams = nhl_client.teams.teams(date=date_check)
             time.sleep(1)  # Do not overwhelm NHL API with excessive requests
 
-            rows = []
-            for position_group in roster:
-                for player in roster[position_group]:
+            for team in teams:
 
-                    if player["id"] in handled_players:
-                        continue
-                    handled_players.add(player["id"])
+                # Get the end-of-season roster for the studied team
+                roster = nhl_client.teams.team_roster(team_abbr=team["abbr"], season=seasonString)
+                time.sleep(1)  # Do not overwhelm NHL API with excessive requests
 
-                    birth_city, _, _ = cityHelper.formatCityName(player)
+                rows = []
+                for position_group in roster:
+                    for player in roster[position_group]:
 
-                    # Missing city information is stored as NULL
-                    if birth_city not in valid_cities:
-                        unknown_cities.append((player["id"], birth_city))
-                        birth_city = None
+                        if player["id"] in handled_players:
+                            continue
+                        handled_players.add(player["id"])
 
-                    rows.append((
-                        player["id"],
-                        getAccentedName(player, "firstName"),
-                        getAccentedName(player, "lastName"),
-                        birth_city,
-                        player.get("birthDate"),
-                        player.get("positionCode"),
-                        player.get("shootsCatches"),
-                        player.get("headshot"),
-                        player.get("heightInCentimeters"),
-                        player.get("weightInKilograms"),
-                    ))
+                        birth_city, _, _ = cityHelper.formatCityName(player)
 
-            # Commit the changes one team at a time
-            if rows:
-                cursor.executemany(sql_command, rows)
-                connection.commit()
+                        # Missing city information is stored as NULL
+                        if birth_city not in valid_cities:
+                            unknown_cities.append((player["id"], birth_city))
+                            birth_city = None
+
+                        rows.append((
+                            player["id"],
+                            getAccentedName(player, "firstName"),
+                            getAccentedName(player, "lastName"),
+                            birth_city,
+                            player.get("birthDate"),
+                            player.get("positionCode"),
+                            player.get("shootsCatches"),
+                            player.get("headshot"),
+                            player.get("heightInCentimeters"),
+                            player.get("weightInKilograms"),
+                        ))
+
+                # Commit the changes one team at a time
+                if rows:
+                    cursor.executemany(sql_command, rows)
+                    connection.commit()
+      
+    else:
+        # If an ID file is given, only search the players in the ID file
+        
+        searched_ids = get_unique_player_ids(id_file)
+        
+        rows = []
+        for player_id in searched_ids:
+        
+            # Find the career stats record for the current ID
+            player = nhl_client.stats.player_career_stats(player_id=player_id)
+        
+            birth_city, _, _ = cityHelper.formatCityName(player, "playerId")
+            
+            # Missing city information is stored as NULL
+            if birth_city not in valid_cities:
+                unknown_cities.append((player["id"], birth_city))
+                birth_city = None
                 
-    # After all the information from NHL API is 
-
+            rows.append((
+                player_id,
+                getAccentedName(player, "firstName"),
+                getAccentedName(player, "lastName"),
+                birth_city,
+                player.get("birthDate"),
+                player.get("position"),
+                player.get("shootsCatches"),
+                player.get("headshot"),
+                player.get("heightInCentimeters"),
+                player.get("weightInKilograms"),
+            ))
+            
+        # Commit the changes after the full list has been gone through
+        if rows:
+            cursor.executemany(sql_command, rows)
+            connection.commit()
+            
+        
+    # After all the information from NHL API is
     if unknown_cities:
         unknown_log_path = "unknown_birth_cities.log"
         with open(unknown_log_path, "w", encoding='utf-8') as f:
@@ -449,6 +653,206 @@ def updateContracts(connection, cursor, cap_wages_reader):
         print(f"Skipped {len(skipped_contracts)} contract(s) -- see {skipped_log_path} for details")
 
 
+def updateMoneyPuckSeasonStats(connection, cursor, rename_column, drop_column, input_tag, output_table, moneypuck_dir, first_season, last_season, phases, check_players, key_columns):
+    """
+    Function for updating MoneyPuck statistics in a season stats table
+    Only the given seasons and phases (regular season / playoffs) are updated.
+    New rows are inserted, and existing rows are updated if any value has changed.
+    This needs a unique constraint on key_columns in the table (see updateStatsConstraints.sql).
+    Everything for one season and phase is committed in one transaction.
+    Rows that would violate a foreign key (unknown team, player or season) are skipped and logged.
+
+    Arguments:
+        connection = Connection object to PostgreSQL database
+        cursor = cursor object to PostgreSQL database
+        rename_column = Dictionary of column names to be renamed
+        drop_column = List of column names to be dropped from the csv data before writing to the database
+        input_tag = Tag identifying the input file (files are named tag_season_phase.csv)
+        output_table = Table name in the database to which stats are written
+        moneypuck_dir = Directory where the MoneyPuck csv files are
+        first_season = Newest season to read, given as the start year (2025 = season 2025-2026)
+        last_season = Oldest season to read, given as the start year
+        phases = List of phases to update, subset of ["regular", "playoffs"]
+        check_players = If True, rows for players that are not in the players table are skipped
+        key_columns = Columns of the unique constraint that identifies a row in the table
+    """
+
+    # Find the column types of the table. Postgres folds unquoted column names to lower case,
+    # so we use lower case names everywhere
+    cursor.execute("""
+        SELECT column_name, data_type FROM information_schema.columns
+        WHERE table_schema = current_schema() AND table_name = %s
+    """, (output_table,))
+    column_types = {name.lower(): data_type for name, data_type in cursor.fetchall()}
+    if not column_types:
+        print("Table {} does not exist in the database. Will not update it.".format(output_table))
+        return
+
+    # Pre-fetch valid foreign key targets, so that one bad row does not abort the whole batch
+    cursor.execute("SELECT code FROM teams")
+    valid_teams = {row[0] for row in cursor.fetchall()}
+    cursor.execute("SELECT season FROM seasons")
+    valid_seasons = {row[0] for row in cursor.fetchall()}
+    valid_players = set()
+    if check_players:
+        cursor.execute("SELECT id FROM players")
+        valid_players = {row[0] for row in cursor.fetchall()}
+
+    skipped_rows = []
+
+    for season in range(first_season, last_season - 1, -1):
+
+        if season not in valid_seasons:
+            print("Season {} is not in the seasons table. Will not update {} for it.".format(season, output_table))
+            continue
+
+        for phase in phases:
+
+            file_name = os.path.join(moneypuck_dir, "{}_{}_{}.csv".format(input_tag, season, phase))
+            if not os.path.isfile(file_name):
+                print("Could not open the file {}. Will not update {} for season {} {}.".format(
+                    file_name, output_table, season, phase))
+                continue
+
+            print("Updating {} for season {} {} from file {}".format(output_table, season, phase, file_name))
+
+            moneyPuck_stats = pandas.read_csv(file_name)
+
+            # Rename some columns to make them consistent between tables
+            # We need to do this at this point as some columns are inconsistent between years
+            moneyPuck_stats = moneyPuck_stats.rename(columns=rename_column)
+
+            # Drop the columns that are not in the database. Postgres column names are lower case
+            moneyPuck_stats = moneyPuck_stats.drop(columns=drop_column)
+            moneyPuck_stats.columns = [column.lower() for column in moneyPuck_stats.columns]
+
+            # Check that the csv file and the table agree on the columns
+            unknown_columns = [column for column in moneyPuck_stats.columns if column not in column_types]
+            if unknown_columns:
+                raise ValueError("Columns {} in file {} are not in table {}".format(
+                    unknown_columns, file_name, output_table))
+
+            # Decode team names
+            moneyPuck_stats["team"] = moneyPuck_stats["team"].replace(moneyPuckDecoder)
+
+            # Convert the values to what the database columns expect
+            # MoneyPuck gives also the integer columns as floats (571.0), and empty values as NaN
+            columns = list(moneyPuck_stats.columns) + ["phase"]
+            rows = []
+            for record in moneyPuck_stats.to_dict("records"):
+
+                if record["team"] not in valid_teams:
+                    skipped_rows.append((season, phase, record.get("playerid"), record["team"], "team not in teams table"))
+                    continue
+                if check_players and int(record["playerid"]) not in valid_players:
+                    skipped_rows.append((season, phase, record.get("playerid"), record["team"], "player not in players table"))
+                    continue
+
+                row = []
+                for column in moneyPuck_stats.columns:
+                    value = record[column]
+                    if pandas.isna(value):
+                        value = None
+                    elif column_types[column] in ("integer", "bigint", "smallint"):
+                        value = int(round(value))
+                    elif column_types[column] in ("real", "double precision", "numeric"):
+                        value = float(value)
+                    else:
+                        value = str(value)
+                    row.append(value)
+                row.append(phase)
+                rows.append(tuple(row))
+
+            # Rows are identified by the unique key. Update only if some value actually changes
+            key_columns_lower = [column.lower() for column in key_columns]
+            other_columns = [column for column in columns if column not in key_columns_lower]
+            insert_command = sql.SQL(
+                "INSERT INTO {table} ({columns}) VALUES %s "
+                "ON CONFLICT ({keys}) DO UPDATE SET {updates} WHERE {changes}"
+            ).format(
+                table=sql.Identifier(output_table),
+                columns=sql.SQL(", ").join(sql.Identifier(column) for column in columns),
+                keys=sql.SQL(", ").join(sql.Identifier(column) for column in key_columns_lower),
+                updates=sql.SQL(", ").join(
+                    sql.SQL("{c} = EXCLUDED.{c}").format(c=sql.Identifier(column)) for column in other_columns),
+                changes=sql.SQL(" OR ").join(
+                    sql.SQL("{t}.{c} IS DISTINCT FROM EXCLUDED.{c}").format(
+                        t=sql.Identifier(output_table), c=sql.Identifier(column)) for column in other_columns))
+
+            try:
+                if rows:
+                    execute_values(cursor, insert_command, rows, page_size=500)
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+
+            print("  {} row(s) written.".format(len(rows)))
+
+    if skipped_rows:
+        skipped_log_path = "skipped_{}.log".format(output_table)
+        with open(skipped_log_path, "w", encoding='utf-8') as f:
+            f.write(f"Skipped {len(skipped_rows)} row(s) due to missing foreign key targets:\n")
+            for season, phase, playerID, team, reason in skipped_rows:
+                f.write(f"season={season} phase={phase} player_id={playerID} team={team}: {reason}\n")
+        print(f"Skipped {len(skipped_rows)} row(s) -- see {skipped_log_path} for details")
+
+
+def updateTeamStats(connection, cursor, moneypuck_dir, first_season, last_season, phases):
+    """
+    Function for updating the team statistics from MoneyPuck csv files
+
+    Arguments:
+        connection = Connection object to PostgreSQL database
+        cursor = cursor object to PostgreSQL database
+        moneypuck_dir = Directory where the MoneyPuck csv files are
+        first_season = Newest season to update, given as the start year
+        last_season = Oldest season to update, given as the start year
+        phases = List of phases to update, subset of ["regular", "playoffs"]
+    """
+
+    # The team files have the column "team" twice, which pandas reads as "team" and "team.1"
+    rename_column = {"iceTime": "icetime", "penalityMinutesFor": "penaltyMinutesFor", "penalityMinutesAgainst": "penaltyMinutesAgainst", "penalitiesFor": "penaltiesFor", "penalitiesAgainst": "penaltiesAgainst"}
+    drop_column = ["name", "team.1", "position"]
+    updateMoneyPuckSeasonStats(connection, cursor, rename_column, drop_column, "teams", "team_season_stats", moneypuck_dir, first_season, last_season, phases, check_players=False, key_columns=["team", "season", "situation", "phase"])
+
+
+def updateGoalieStats(connection, cursor, moneypuck_dir, first_season, last_season, phases):
+    """
+    Function for updating the goalie statistics from MoneyPuck csv files
+
+    Arguments:
+        connection = Connection object to PostgreSQL database
+        cursor = cursor object to PostgreSQL database
+        moneypuck_dir = Directory where the MoneyPuck csv files are
+        first_season = Newest season to update, given as the start year
+        last_season = Oldest season to update, given as the start year
+        phases = List of phases to update, subset of ["regular", "playoffs"]
+    """
+
+    rename_column = {"penalityMinutes": "penaltyMinutes"}
+    drop_column = ["name", "position"]
+    updateMoneyPuckSeasonStats(connection, cursor, rename_column, drop_column, "goalies", "goalie_season_stats", moneypuck_dir, first_season, last_season, phases, check_players=True, key_columns=["playerId", "season", "situation", "phase"])
+
+
+def updateSkaterStats(connection, cursor, moneypuck_dir, first_season, last_season, phases):
+    """
+    Function for updating the skater statistics from MoneyPuck csv files
+
+    Arguments:
+        connection = Connection object to PostgreSQL database
+        cursor = cursor object to PostgreSQL database
+        moneypuck_dir = Directory where the MoneyPuck csv files are
+        first_season = Newest season to update, given as the start year
+        last_season = Oldest season to update, given as the start year
+        phases = List of phases to update, subset of ["regular", "playoffs"]
+    """
+
+    rename_column = {"penalityMinutes": "penaltyMinutes", "penalityMinutesDrawn": "penaltyMinutesDrawn"}
+    drop_column = ["name", "position", "I_F_shifts", "I_F_penalityMinutes", "I_F_faceOffsWon"]
+    updateMoneyPuckSeasonStats(connection, cursor, rename_column, drop_column, "skaters", "skater_season_stats", moneypuck_dir, first_season, last_season, phases, check_players=True, key_columns=["playerId", "season", "situation", "phase"])
+
+
 def main():
     """
     Main function. Connects to PostgreSQL database and updates the cities table from input file
@@ -457,6 +861,9 @@ def main():
     # Define all tables that are available in the database
     all_tables = ["players", "nationalities", "teams", "cities", "team_season_stats", "skater_season_stats", "goalie_season_stats", "contracts", "seasons"]
     
+    # The tables that are updated from MoneyPuck csv files
+    all_stats_tables = ["team_season_stats", "skater_season_stats", "goalie_season_stats"]
+    
     # Read the command line configuration
     parser = argparse.ArgumentParser(
         description="Update selected tables in the NHL database"
@@ -464,11 +871,12 @@ def main():
     parser.add_argument(
         "--tables",
         nargs="+",
-        choices=all_tables + ["all"],
+        choices=all_tables + ["all-stats", "all"],
         required=True,
         help=(
             "Which table(s) to update. Space-separated list, e.g. "
-            "'--tables cities contracts'. Use 'all' to update every table."
+            "'--tables cities contracts'. Use 'all-stats' to update the three season stats tables "
+            "(team, skater and goalie), and 'all' to update every table."
         ),
     )
     parser.add_argument(
@@ -489,18 +897,20 @@ def main():
     )
     parser.add_argument(
         "--newestseason",
+        "--lastseason",
         type=int,
         default=2026,
         help=(
-            "Newest season (start year, 2026 = 2026-2027) read when updating the players table"
+            "Newest season (start year, 2026 = 2026-2027) updated for the players table and the MoneyPuck stats tables"
         ),
     )
     parser.add_argument(
         "--oldestseason",
+        "--firstseason",
         type=int,
         default=2026,
         help=(
-            "Oldest season (start year) read when updating the players table"
+            "Oldest season (start year) updated for the players table and the MoneyPuck stats tables"
         ),
     )
     parser.add_argument(
@@ -512,6 +922,36 @@ def main():
         ),
     )
     parser.add_argument(
+        "--logfile",
+        type=str,
+        default=None,
+        help=(
+            "Log file produced when trying to fill statistics telling which players were missed. If given, only these players are filled to players table and other arguments regarding on what to fill to the players table are ignored."
+        ),
+    )
+    parser.add_argument(
+        "--regular",
+        action="store_true",
+        help=(
+            "Update the regular season stats from MoneyPuck csv files (for the stats tables)"
+        ),
+    )
+    parser.add_argument(
+        "--playoffs",
+        action="store_true",
+        help=(
+            "Update the playoff stats from MoneyPuck csv files (for the stats tables)"
+        ),
+    )
+    parser.add_argument(
+        "--moneypuckdir",
+        type=str,
+        default="moneyPuck",
+        help=(
+            "Directory containing the MoneyPuck csv files (named like skaters_2025_regular.csv)"
+        ),
+    )
+    parser.add_argument(
         "--remote",
         action="store_true",
         help=(
@@ -519,29 +959,49 @@ def main():
         ),
     )
     args = parser.parse_args()
+
+    if args.oldestseason > args.newestseason:
+        parser.error("--oldestseason must not be later than --newestseason")
     
     # Based on the tables argument, select which tables to update in the database
-    tables_to_update = all_tables if "all" in args.tables else args.tables
+    if "all" in args.tables:
+        tables_to_update = all_tables
+    else:
+        tables_to_update = [table for table in args.tables if table != "all-stats"]
+        if "all-stats" in args.tables:
+            tables_to_update += [table for table in all_stats_tables if table not in tables_to_update]
 
     # Connect to the Postgres database
     connection = get_connection(args.remote)
     cursor = connection.cursor()
     
+    # If we are updating teams or players tables, we need NHL client
+    if ("teams" in tables_to_update) or ("players" in tables_to_update):
+        nhl_client = NHLClient()
+    
     # Print that connection has been established
     database_type = "remote" if args.remote else "local"
     print("Connected to {} database".format(database_type))
     
+    # Update the seasons table
+    # This is done first, as the season stats tables refer to it
+    if "seasons" in tables_to_update:
+        updateSeasons(connection, cursor)
+
     # Update the cities table
     if "cities" in tables_to_update:
         updateCities(connection, cursor, args.cityjson)
+
+    # Update the teams table
+    # This is done before contracts (signing_team refers to it) and the stats tables (team refers to it)
+    # Also we need cities for NHL franchises before running this
+    if "teams" in tables_to_update:
+        updateTeams(connection, cursor, nhl_client, args.newestseason, args.oldestseason)
         
     # Update the players table
     # This is done after cities (birth_city refers to it) and before contracts (player_id refers to players)
     if "players" in tables_to_update:
-        if args.oldestseason > args.newestseason:
-            parser.error("--oldestseason must not be later than --newestseason")
-        nhl_client = NHLClient()
-        updatePlayers(connection, cursor, nhl_client, args.newestseason, args.oldestseason)
+        updatePlayers(connection, cursor, nhl_client, args.newestseason, args.oldestseason, args.logfile)
         
     # Update player nationalities in players table
     if "nationalities" in tables_to_update:
@@ -581,7 +1041,25 @@ def main():
             connection.rollback()
             raise
     
-    # TODO: Update all other types of tables
+    # Update the stats tables from MoneyPuck csv files
+    # Teams and players are updated before this, as the stats refer to them
+    stats_tables = {
+        "team_season_stats": updateTeamStats,
+        "skater_season_stats": updateSkaterStats,
+        "goalie_season_stats": updateGoalieStats,
+    }
+    phases = []
+    if args.regular:
+        phases.append("regular")
+    if args.playoffs:
+        phases.append("playoffs")
+
+    for table_name, update_function in stats_tables.items():
+        if table_name in tables_to_update:
+            if not phases:
+                print("Neither --regular nor --playoffs given. Will not update {}.".format(table_name))
+                continue
+            update_function(connection, cursor, args.moneypuckdir, args.newestseason, args.oldestseason, phases)
     
     # Close the connection
     connection.close()

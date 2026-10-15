@@ -1,4 +1,5 @@
 import country_converter as coco
+import re
 from manualDataEntry import NHLPlayerData
 
 class cityFormatter():
@@ -76,12 +77,13 @@ class cityFormatter():
             "Yukon": "YT"
         }
 
-    def formatCityName(self, player):
+    def formatCityName(self, player, id_string = "id"):
         """
         Format the birth city of a player from NHL API dictionary to a good format
     
-        Argument:
+        Arguments:
             player: Player dictionary read from NHL API
+            id_string: String giving the NHL API ID number for the player
         
         Return:
             Birth city, state, and country for the player
@@ -100,9 +102,9 @@ class cityFormatter():
             countryCode = player["birthCountry"]
         else:
             data_provider = NHLPlayerData()
-            city = data_provider.get_birth_city(player["id"])
-            state = data_provider.get_birth_state(player["id"])
-            countryCode = data_provider.get_birth_country(player["id"])
+            city = data_provider.get_birth_city(player[id_string])
+            state = data_provider.get_birth_state(player[id_string])
+            countryCode = data_provider.get_birth_country(player[id_string])
         
             if state != "":
                 state = ", {}".format(state)
@@ -271,3 +273,21 @@ def add_quotes(input_string):
         return input_string
     
     return "\"" + input_string + "\""
+
+def get_unique_player_ids(filename):
+    """Return a list of unique player_id values from a skipped-rows log file,
+    in order of first appearance."""
+    pattern = re.compile(r"\bplayer_id=(\d+)")
+    seen = set()
+    result = []
+
+    with open(filename, "r", encoding="utf-8") as f:
+        for line in f:
+            match = pattern.search(line)
+            if match:
+                player_id = int(match.group(1))
+                if player_id not in seen:
+                    seen.add(player_id)
+                    result.append(player_id)
+
+    return result

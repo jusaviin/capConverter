@@ -1,9 +1,8 @@
-#!/Users/jviinika/code/nhl/nhlEnvironment/bin/python3
-
 from nhlpy import NHLClient
 from geopy.geocoders import Nominatim
 from manualDataEntry import NHLTeamData
-from helperFunctions import cityFormatter
+from helperFunctions import cityFormatter, get_unique_player_ids
+import argparse
 import time
 import json
 
@@ -80,14 +79,85 @@ def addCityToDictionary(geolocator, cityLocations, city, state_code, country = "
     time.sleep(1)  # Can only make 1 Nominatim request per second
     
 
+def jsonFileName(value):
+    """
+    Argparse type for validating that the given file name has a .json extension
+    """
+    if not value.lower().endswith(".json"):
+        raise argparse.ArgumentTypeError(
+            "file name must have a .json extension, got '{}'".format(value))
+    return value
+
+
+def parseArguments():
+    """
+    Define and parse the command line arguments.
+
+    Seasons can be given either as a range (--firstseason and --lastseason)
+    or as an explicit list of not necessarily consecutive seasons (--seasons).
+    The two ways of selecting seasons cannot be combined. If neither is given,
+    only the season 2026 is used.
+    """
+    parser = argparse.ArgumentParser(
+        description="Create or update a json file with information about birth cities "
+                    "of NHL players and home cities of NHL teams.")
+
+    parser.add_argument("--cityfilename", type=jsonFileName,
+                        default="cityCoordinatesUpdatedAgain.json",
+                        help="json file to create or update (default: %(default)s)")
+    parser.add_argument("--firstseason", type=int, default=None,
+                        help="first season of the range to scan, given as the starting "
+                             "year, e.g. 2026 for season 2026-2027 (default: 2026)")
+    parser.add_argument("--lastseason", type=int, default=None,
+                        help="last season of the range to scan, given as the starting "
+                             "year (default: 2026)")
+    parser.add_argument("--seasons", type=int, nargs="+", default=None,
+                        help="explicit list of seasons to scan, given as starting years, "
+                             "e.g. --seasons 2018 2021 2026. Cannot be combined with "
+                             "--firstseason or --lastseason")
+    parser.add_argument("--logfile", type=str, default=None,
+                        help=("Log file containing players that were skipped when trying to fill stats tables.")
+    )
+                             
+
+    args = parser.parse_args()
+
+    # Work out which seasons to scan
+    if args.seasons is not None:
+        if args.firstseason is not None or args.lastseason is not None:
+            parser.error("--seasons cannot be combined with --firstseason or --lastseason")
+        startYears = args.seasons
+    else:
+        first = args.firstseason if args.firstseason is not None else 2026
+        last = args.lastseason if args.lastseason is not None else 2026
+        if first > last:
+            parser.error("--firstseason ({}) cannot be later than --lastseason ({})".format(first, last))
+        startYears = range(first, last + 1)
+
+    # NHL API wants seasons in format 20262027. Remove duplicates and sort chronologically
+    args.seasonList = [seasonFormatter(year) for year in sorted(set(startYears))]
+    return args
+
+
+def seasonFormatter(startYear):
+    """
+    Convert the starting year of a season to the format used by NHL API
+    Example: 2026 -> "20262027"
+    """
+    return "{}{}".format(startYear, startYear + 1)
+
+
 def main():
     """
     Main program. Creates a json file with information about birth cities of NHL players.
     Also cities of all the teams are added to the json file
     """
 
-    # Define the filename for the city file we want to modify/create
-    cityFileName = "cityCoordinatesUpdatedAgain.json"
+    # Read the settings from the command line
+    args = parseArguments()
+
+    # The city file we want to modify/create
+    cityFileName = args.cityfilename
 
     # If the json file exists, append new cities to that
     # If it does not exist, create a new one
@@ -121,41 +191,56 @@ def main():
     # Prepare the NHL client
     client = NHLClient()
 
-    # Define the seasons for which the rosters are scanned
-    seasons = ["20262027"]
+    # The seasons for which the rosters are scanned (format 20262027)
+    seasons = args.seasonList
 
-    # Loop over seasons
-    for currentSeason in seasons:
-        print("Finding cities for all players for {} season".format(currentSeason))
+    if args.logfile == None:
+        # If we are not given an explicit log of player IDs, search all players in a given season
+   
+        # Loop over seasons
+        for currentSeason in seasons:
+            print("Finding cities for all players for {} season".format(currentSeason))
         
-        # Find all the teams that were playing in the given season
-        teams = client.teams.teams(date="{}-10-01".format(currentSeason[:4]))
+            # Find all the teams that were playing in the given season
+            teams = client.teams.teams(date="{}-10-01".format(currentSeason[:4]))
+            time.sleep(1)
 
-        # Loop over teams that played in the NHL the given season
-        for team in teams:
-        
-            # Debug
-            #if team["abbr"] != "STL":
-            #    continue
+            # Loop over teams that played in the NHL the given season
+            for team in teams:
 
-            # Print a message that we are finding cities for a spacific team
-            print("Finding city locations for {}".format(team['name']))
+                # Print a message that we are finding cities for a spacific team
+                print("Finding city locations for {}".format(team['name']))
 
-            # Loop over all players in the given team
-            roster = client.teams.team_roster(team_abbr=team['abbr'], season = currentSeason)
-            for position in roster:
-                for player in roster[position]:
-                
-                    # Debug
-                    #print(player)
+                # Loop over all players in the given team
+                roster = client.teams.team_roster(team_abbr=team['abbr'], season = currentSeason)
+                for position in roster:
+                    for player in roster[position]:
             
-                    # Get the city and state information in a nice format
-                    city, state, country = cityHelper.formatCityName(player)
+                        # Get the city and state information in a nice format
+                        city, state, country = cityHelper.formatCityName(player)
         
-                    # If the city is not already in the cityLocations dictionary, find its coordinates
-                    # and add it to the dictionary
-                    if city not in cityLocations:
-                        addCityToDictionary(geolocator, cityLocations, city, state, country)
+                        # If the city is not already in the cityLocations dictionary, find its coordinates
+                        # and add it to the dictionary
+                        if city not in cityLocations:
+                            addCityToDictionary(geolocator, cityLocations, city, state, country)
+                            
+    else:
+        # If we are given a player ID log, only search for players in the log
+        
+        searched_ids = get_unique_player_ids(args.logfile)
+        for player_id in searched_ids:
+            
+            # Find the career stats record for the current ID
+            player = client.stats.player_career_stats(player_id=player_id)
+            time.sleep(1)
+        
+            city, state, country = cityHelper.formatCityName(player, "playerId")
+            
+            # If the city is not already in the cityLocations dictionary, find its coordinates
+            # and add it to the dictionary
+            if city not in cityLocations:
+                addCityToDictionary(geolocator, cityLocations, city, state, country)
+        
 
     # After all the city locations have been gone through, save the output to json file
     with open(cityFileName, "w", encoding='utf-8') as f:

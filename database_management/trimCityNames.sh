@@ -33,7 +33,7 @@ fi
 
 # Make the manual city name modifications to the output file
 sed "${SEDARGS[@]}" "s# Charter Township##" ${OUTPUTFILE}
-sed "${SEDARGS[@]}" "s# Township##" ${OUTPUTFILE}
+sed "${SEDARGS[@]}" "s# Township\"#\"#" ${OUTPUTFILE}
 sed "${SEDARGS[@]}" "s# municipality##" ${OUTPUTFILE}
 sed "${SEDARGS[@]}" "s# County##" ${OUTPUTFILE}
 sed "${SEDARGS[@]}" "s# Peninsula##" ${OUTPUTFILE}

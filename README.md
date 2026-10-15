@@ -14,60 +14,7 @@ pip install -e ".[all]"
 
 ## Setting up local test database
 
-The app reads data from PostgreSQL database. This choise was made because it is free and widely available when deploying to a server. You will need to complete the following steps to get the database running in your own computer.
-
-1. Install PostgreSQL
-
-On Mac, this can be easily done with Homebrew:
-
-```
-brew install postgresql
-```
-
-2. Start PostgreSQL server
-
-Again, the instruction here is Mac-specific assuming you installed PostgreSQL via Homebrew.
-
-```
-brew services start postgresql@18
-```
-
-Note: you can stop the PostgreSQL server with command
-
-```
-brew services stop postgresql@18
-```
-
-Remember to adjust the PostgreSQL version to whichever version you are using.
-
-3. Create a new database
-
-```
-createdb nhldb
-psql -d nhldb -f databaseSchema_postgres.sql
-```
-
-4. Add the database URL to .env file
-
-The exact line you need to add is
-
-```
-POSTGRES_URL=postgresql://username:password@localhost:5432/nhldb
-```
-
-If you ran these commands from the terminal, the username and password default to your regular terminal username and password
-
-5. Fill the database
-
-I am eventually combining this project with https://github.com/jusaviin/nhlAnalyzer. I am just using the database created with that project but converted from SQLite to PostgreSQL. Check the other project for now for instructions on how to fill the database.
-
-6. Enable searching without accents
-
-I try to use accented names for all players as consistently as I can. To facilitate searching from database, it is good to use the unaccent extension in PostgreSQL. You can enable it with
-
-```
-psql -d nhldb -c "CREATE EXTENSION IF NOT EXISTS unaccent;"
-```
+You will need to have your local PostgreSQL database running to be able to run this app. Instructions on how to manage the database are in the `README.md` file in `database_management` folder.
 
 ## Running the app
 

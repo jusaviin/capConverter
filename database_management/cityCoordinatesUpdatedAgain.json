@@ -14347,5 +14347,36 @@
         "country": "Canada",
         "state": "Quebec",
         "state_code": "QC"
+    },
+    "Sarov": {
+        "coordinates": [
+            54.9231153,
+            43.342674
+        ],
+        "nameLocal": "Саров",
+        "nameEnglish": "Sarov",
+        "country": "Russia"
+    },
+    "Alpena, MI": {
+        "coordinates": [
+            45.0176181,
+            -83.6670019
+        ],
+        "nameLocal": "Alpena County",
+        "nameEnglish": "Alpena County",
+        "country": "United States",
+        "state": "Michigan",
+        "state_code": "MI"
+    },
+    "Roseville, CA": {
+        "coordinates": [
+            38.7521235,
+            -121.2880059
+        ],
+        "nameLocal": "Roseville",
+        "nameEnglish": "Roseville",
+        "country": "United States",
+        "state": "California",
+        "state_code": "CA"
     }
 }

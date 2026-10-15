@@ -214,6 +214,9 @@ CREATE TABLE team_season_stats
     FOREIGN KEY (season) REFERENCES seasons(season)
 );
 
+ALTER TABLE team_season_stats
+ADD CONSTRAINT team_season_stats_unique UNIQUE (team, season, situation, phase);
+
 -- Statistics tables are filled directly from MoneyPuck csv files
 -- See the MoneyPuck dictionary for explanation of column values
 CREATE TABLE skater_season_stats
@@ -262,7 +265,6 @@ CREATE TABLE skater_season_stats
     I_F_savedShotsOnGoal INTEGER,
     I_F_savedUnblockedShotAttempts INTEGER,
     penalties INTEGER,
-    I_F_faceOffsWon INTEGER,
     I_F_hits INTEGER,
     I_F_takeaways INTEGER,
     I_F_giveaways INTEGER,
@@ -375,6 +377,9 @@ CREATE TABLE skater_season_stats
     FOREIGN KEY (season) REFERENCES seasons(season)
 );
 
+ALTER TABLE skater_season_stats
+ADD CONSTRAINT skater_season_stats_unique UNIQUE (playerId, season, situation, phase);
+
 -- TODO: Goalie stats are missing the number of wins. Need to get this from NHL API instead of MoneyPuck
 CREATE TABLE goalie_season_stats
 (
@@ -418,6 +423,9 @@ CREATE TABLE goalie_season_stats
     FOREIGN KEY (team) REFERENCES teams(code),
     FOREIGN KEY (season) REFERENCES seasons(season)
 );
+
+ALTER TABLE goalie_season_stats
+ADD CONSTRAINT goalie_season_stats_unique UNIQUE (playerId, season, situation, phase);
 
 -- Pre-fill a few seasons before the salary cap such that some older
 -- contracts are compatible with foreign key rules
