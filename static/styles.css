@@ -127,6 +127,28 @@ form {
   border-radius: 10px;
   box-shadow: 0 1px 4px rgba(0,0,0,0.08);
 }
+#autofilled-wrapper {
+  display: contents;
+}
+#autofilled-wrapper.autofilled-group {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  border: 2px solid #2563eb;
+  border-radius: 8px;
+  padding: 16px;
+  background: #f8fafc;
+}
+.autofilled-player-name {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #2563eb;
+  margin-bottom: -4px;
+  display: none;
+}
+#autofilled-wrapper.autofilled-group .autofilled-player-name {
+  display: block;
+}
 label {
   font-size: 0.85rem;
   font-weight: 600;
@@ -626,6 +648,23 @@ select:disabled { background: #f3f4f6; color: #888; }
 }
 .popup-title { font-weight: 600; margin-bottom: 4px; }
 .popup-players { margin: 0; padding-left: 18px; }
+
+/* Player tab: name search box inside the controls bar */
+.player-search {
+  display: flex;
+  gap: 8px;
+  flex: 1 1 260px;
+  max-width: 420px;
+}
+.player-search input {
+  flex: 1;
+  min-width: 0;
+  font-size: 1rem;
+  padding: 10px 12px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+}
+#player-panel .autofill-list { margin-top: 0; }
 
 /* ==========================================================================
    Map Page: Quiz Mode

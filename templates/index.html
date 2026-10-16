@@ -52,18 +52,21 @@
 </div>
 
 <form id="cap-form">
-  <label>
-    Salary Cap Hit (M$)
-    <input type="number" id="cap_hit" step="any" min="0" required>
-  </label>
-  <label>
-    Number of Seasons
-    <select id="num_years" required></select>
-  </label>
-  <label>
-    Contract Start Season
-    <select id="contract_start_year" required></select>
-  </label>
+  <div id="autofilled-wrapper">
+    <div class="autofilled-player-name" id="autofilled-player-name"></div>
+    <label>
+      Salary Cap Hit (M$)
+      <input type="number" id="cap_hit" step="any" min="0" required>
+    </label>
+    <label>
+      Number of Seasons
+      <select id="num_years" required></select>
+    </label>
+    <label>
+      Contract Start Season
+      <select id="contract_start_year" required></select>
+    </label>
+  </div>
   <label>
     Reference Contract Start Season
     <select id="reference_start_year" required></select>
@@ -529,7 +532,7 @@ async function showPlayerContracts(player) {
         <div class="primary">${seasonLabel(contract.start_season)} to ${seasonLabel(contract.end_season)} (${contract.num_years} season${contract.num_years === 1 ? '' : 's'})</div>
         <div class="secondary">${contract.type}${contract.team ? ` &middot; ${contract.team}` : ''} &middot; ${formatNumber(contract.cap_hit_millions)} M$ cap hit</div>
       `;
-      item.addEventListener('click', () => applyContractAutofill(contract, player.position));
+      item.addEventListener('click', () => applyContractAutofill(contract, player.position, `${player.first_name} ${player.last_name}`));
       contractResultsList.appendChild(item);
     });
   }
@@ -542,25 +545,31 @@ let selectedContractId = null;
 let selectedContractPosition = null;
     
 // Reset selectedContractId if user manually edits input fields
-document.getElementById('cap_hit').addEventListener('input', () => { 
-  selectedContractId = null; 
-  selectedContractPosition = null; 
-});
-document.getElementById('num_years').addEventListener('change', () => {
+function clearAutofillHighlight() {
   selectedContractId = null;
   selectedContractPosition = null;
+  const wrapper = document.getElementById('autofilled-wrapper');
+  wrapper.classList.remove('autofilled-group');
+  const nameLabel = document.getElementById('autofilled-player-name');
+  nameLabel.textContent = '';
+}
+
+document.getElementById('cap_hit').addEventListener('input', () => { 
+  clearAutofillHighlight();
+});
+document.getElementById('num_years').addEventListener('change', () => {
+  clearAutofillHighlight();
   constrainStartYearsToLength(Number(document.getElementById('num_years').value));
 });
 document.getElementById('contract_start_year').addEventListener('change', () => {
-  selectedContractId = null;
-  selectedContractPosition = null;
+  clearAutofillHighlight();
   constrainLengthToStartYears();
 });
 document.getElementById('reference_start_year').addEventListener('change', () => {
   constrainLengthToStartYears();
 });
     
-function applyContractAutofill(contract, playerPosition) {
+function applyContractAutofill(contract, playerPosition, playerName) {
   autofillWarning.style.display = 'none';
         
   if (knownMaxStartYear !== null && contract.start_season > knownMaxStartYear) {
@@ -584,6 +593,12 @@ function applyContractAutofill(contract, playerPosition) {
   // this contract's length, reverting it to the latest season the
   // length allows if it's currently too recent.
   constrainStartYearsToLength(contract.num_years);
+
+  // Show blue line and player name
+  const wrapper = document.getElementById('autofilled-wrapper');
+  const nameLabel = document.getElementById('autofilled-player-name');
+  nameLabel.textContent = `Pre-filled from ${playerName}`;
+  wrapper.classList.add('autofilled-group');
         
   document.getElementById('cap-form').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
