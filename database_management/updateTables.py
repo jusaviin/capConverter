@@ -544,102 +544,153 @@ def updateContracts(connection, cursor, cap_wages_reader):
 
     missed_slugs = []
     skipped_contracts = []
-    rows = []
+    rows = []                 # rows waiting to be committed
 
-    # Loop over all player slugs
-    for i, slug in enumerate(cap_wages_reader.slug_list):
+    slugs = cap_wages_reader.slug_list
+    BATCH_SIZE = 100          # commit to the database every this many players
+    remaining_file = "remaining_contract_slugs.txt"
 
-        if i % 100 == 0:
-            print(f"Finding contracts for player {i}/{len(cap_wages_reader.slug_list)}")
+    next_index = 0            # slugs[:next_index] have been fully processed
+    committed_upto = 0        # slugs[:committed_upto] are committed in the database
 
+    def flush():
+        """Write pending rows to the database and mark progress."""
+        nonlocal rows, committed_upto
         try:
-            player = cap_wages_reader.get_player_details(slug)
+            if rows:
+                cursor.executemany(sql_command, rows)
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        rows = []
+        committed_upto = next_index
 
-            for contract in player["data"]["contracts"]:
+    try:
+        # Loop over all player slugs
+        for i, slug in enumerate(slugs):
 
-                playerID = player["data"]["nhlId"]
+            if i % 100 == 0:
+                print(f"Finding contracts for player {i}/{len(slugs)}")
 
-                # There can be cases where nhlId is not available in the players table
-                # We need to skip these as we cannot connect the contract to any player in this case
-                if playerID is None:
-                    continue
+            try:
+                player = cap_wages_reader.get_player_details(slug)
 
-                playerID = int(playerID)
+                # Collect this player's rows separately, so that a failure
+                # in the middle of a player never leaves partial data in rows
+                slug_rows = []
+
+                for contract in player["data"]["contracts"]:
+
+                    playerID = player["data"]["nhlId"]
+
+                    # There can be cases where nhlId is not available in the players table
+                    # We need to skip these as we cannot connect the contract to any player in this case
+                    if playerID is None:
+                        continue
+
+                    playerID = int(playerID)
                 
-                # Skip contracts for players not yet in our players table --
-                # would violate the player_id foreign key
-                if playerID not in valid_player_ids:
-                    skipped_contracts.append((playerID, slug, "player_id not in players table"))
-                    continue
+                    # Skip contracts for players not yet in our players table --
+                    # would violate the player_id foreign key
+                    if playerID not in valid_player_ids:
+                        skipped_contracts.append((playerID, slug, "player_id not in players table"))
+                        continue
 
-                contract_type = contract["contractType"]
-                signing_date = contract["signingDate"]
+                    contract_type = contract["contractType"]
+                    signing_date = contract["signingDate"]
 
-                min_season = int(contract["seasons"][0]["season"][:4])
-                max_season = int(contract["seasons"][0]["season"][:4])
+                    min_season = int(contract["seasons"][0]["season"][:4])
+                    max_season = int(contract["seasons"][0]["season"][:4])
 
-                for season in contract["seasons"]:
-                    current_season = int(season["season"][:4])
-                    if current_season < min_season:
-                        min_season = current_season
-                    if current_season > max_season:
-                        max_season = current_season
+                    for season in contract["seasons"]:
+                        current_season = int(season["season"][:4])
+                        if current_season < min_season:
+                            min_season = current_season
+                        if current_season > max_season:
+                            max_season = current_season
 
-                # Some players' entry-level (or other) contracts come back from
-                # the API with the wrong signing_date -- known cases are
-                # corrected here using start_season, which is unaffected by
-                # the bug, to identify which contract is really meant.
-                correction_key = (playerID, signing_date, min_season)
-                if correction_key in contract_date_corrections:
-                    signing_date = contract_date_corrections[correction_key]
+                    # Some players' entry-level (or other) contracts come back from
+                    # the API with the wrong signing_date -- known cases are
+                    # corrected here using start_season, which is unaffected by
+                    # the bug, to identify which contract is really meant.
+                    correction_key = (playerID, signing_date, min_season)
+                    if correction_key in contract_date_corrections:
+                        signing_date = contract_date_corrections[correction_key]
 
-                total_value = contract["contractValue"]
+                    total_value = contract["contractValue"]
 
-                # Cap Hit value can be none in some seasons. Try to find cap hit from any season in the contract
-                cap_hit = contract["seasons"][0]["capHit"]
-                i_season = 1
-                while cap_hit is None:
-                    if i_season == len(contract["seasons"]):
-                        break
-                    cap_hit = contract["seasons"][i_season]["capHit"]
-                    i_season += 1
+                    # Cap Hit value can be none in some seasons. Try to find cap hit from any season in the contract
+                    cap_hit = contract["seasons"][0]["capHit"]
+                    i_season = 1
+                    while cap_hit is None:
+                        if i_season == len(contract["seasons"]):
+                            break
+                        cap_hit = contract["seasons"][i_season]["capHit"]
+                        i_season += 1
                     
-                # Extra signing information
-                signing_team_full_name = contract["signingTeam"]
-                signing_gm = contract["signedBy"]
-                expiry_status = contract["expiryStatus"]
+                    # Extra signing information
+                    signing_team_full_name = contract["signingTeam"]
+                    signing_gm = contract["signedBy"]
+                    expiry_status = contract["expiryStatus"]
                 
-                # We need to extract the three letter abbreviation from the full team name
-                signing_team = team_code_finder.get_team_code(signing_team_full_name)
+                    # We need to extract the three letter abbreviation from the full team name
+                    signing_team = team_code_finder.get_team_code(signing_team_full_name)
                 
-                # Skip contracts whose signing team doesn't resolve to a
-                # known code -- would violate the signing_team foreign key
-                if signing_team not in valid_team_codes:
-                    skipped_contracts.append((playerID, slug, f"unknown signing_team '{signing_team_full_name}'"))
-                    continue
+                    # Skip contracts whose signing team doesn't resolve to a
+                    # known code -- would violate the signing_team foreign key
+                    if signing_team not in valid_team_codes:
+                        skipped_contracts.append((playerID, slug, f"unknown signing_team '{signing_team_full_name}'"))
+                        continue
 
-                rows.append((
-                    playerID,
-                    contract_type,
-                    signing_date,
-                    min_season,
-                    max_season,
-                    total_value,
-                    cap_hit,
-                    signing_team,
-                    signing_gm,
-                    expiry_status
-                ))
+                    slug_rows.append((
+                        playerID,
+                        contract_type,
+                        signing_date,
+                        min_season,
+                        max_season,
+                        total_value,
+                        cap_hit,
+                        signing_team,
+                        signing_gm,
+                        expiry_status
+                    ))
 
-        except requests.exceptions.HTTPError:
-            missed_slugs.append(slug)
-            print(f"{i} player {slug} not in API!")
+                rows.extend(slug_rows)
 
-        finally:
-            time.sleep(1)  # Do not overwhelm CapWages API
+            except requests.exceptions.HTTPError:
+                missed_slugs.append(slug)
+                print(f"{i} player {slug} not in API!")
 
-    cursor.executemany(sql_command, rows)
-    connection.commit()
+            finally:
+                time.sleep(1)  # Do not overwhelm CapWages API
+
+            next_index = i + 1
+            if next_index % BATCH_SIZE == 0:
+                flush()
+
+    except BaseException as e:   # BaseException so Ctrl-C is handled too
+        print(f"\nupdateContracts interrupted at player {next_index}/{len(slugs)}: "
+              f"{type(e).__name__}")
+
+        # Try to save the work done so far
+        try:
+            flush()
+        except Exception as flush_error:
+            print(f"Could not commit pending rows ({type(flush_error).__name__}); "
+                  f"they will be redone on the next run")
+
+        # Everything after the last committed player still needs doing
+        remaining = slugs[committed_upto:]
+        with open(remaining_file, "w", encoding="utf-8") as f:
+            for slug in remaining:
+                f.write(f"{slug}\n")
+        print(f"{len(remaining)} slug(s) not committed. Written to {remaining_file}")
+        print(f"Continue with: --tables contracts --slugfile {remaining_file}")
+        raise
+
+    # Final commit for the last partial batch
+    flush()
 
     print("Players not in API:")
     print(missed_slugs)
