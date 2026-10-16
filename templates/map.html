@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>NHL Team &amp; Roster Map</title>
+<title>NHL Team, Roster &amp; Player Map</title>
 {% from '_nav.html' import nav_styles, site_nav, site_footer %}
 {{ nav_styles() }}
 
@@ -17,16 +17,18 @@
 {{ site_nav('map') }}
 </div>
 
-<h1>NHL Team &amp; Roster Map</h1>
+<h1>NHL Team, Roster &amp; Player Map</h1>
 
 <p id="intro" class="map-intro">
-  See where NHL teams play, or where a team's players were born. The map automatically updates every time you make a selection. You can also do a quiz trying to guess in which city a player matching your selections was born!
+  See where NHL teams play, where a team's players were born, where a single player was born, or where all the players of one nationality were born. The map automatically updates every time you make a selection. You can also do a quiz trying to guess in which city a player matching your selections was born!
 </p>
 
 <div class="controls">
   <div class="mode-toggle" role="group" aria-label="Map type">
     <button type="button" id="mode-teams" class="active" aria-pressed="true">Teams</button>
     <button type="button" id="mode-rosters" aria-pressed="false">Roster</button>
+    <button type="button" id="mode-player" aria-pressed="false">Player</button>
+    <button type="button" id="mode-nationality" aria-pressed="false">Nationality</button>
     <button type="button" id="mode-quiz" aria-pressed="false">Quiz</button>
   </div>
 
@@ -39,6 +41,16 @@
     Team
     <select id="team-select" disabled></select>
   </label>
+
+  <label id="nationality-label" hidden>
+    Nationality
+    <select id="nationality-select" disabled></select>
+  </label>
+
+  <div id="player-search-control" class="player-search" hidden>
+    <input type="search" id="player-search-input" placeholder="Search player name" aria-label="Search player name" autocomplete="off">
+    <button type="button" id="player-search-btn" class="quiz-start-btn">Search</button>
+  </div>
 
   <label id="quiz-season-label" hidden>
     Quiz season
@@ -59,6 +71,8 @@
 
   <button type="button" id="quiz-start-btn" class="quiz-start-btn" disabled hidden>Start quiz</button>
 </div>
+
+<div id="player-panel" class="quiz-panel" hidden></div>
 
 <div id="quiz-panel" class="quiz-panel" hidden></div>
 
@@ -92,6 +106,18 @@
         </p>
     </details>
     <details>
+        <summary>How does the player tab work?</summary>
+        <p>
+        Type at least two characters of a player's name and press Search (or Enter), then pick the player from the list. The map shows his birth city. Accents are ignored, so "Stutzle" finds Stützle.
+        </p>
+    </details>
+    <details>
+        <summary>How does the nationality tab work?</summary>
+        <p>
+        Choose a season and a nationality to see the birth cities of all players of that nationality who played in the selected season. The nationality list only contains nationalities that were active in that season.
+        </p>
+    </details>
+    <details>
         <summary>How does the quiz work?</summary>
         <p>
         In the quiz, you must find the birth city of the randomly selected player. If you would like, you can restrict the selected players to those on a specific team, those that played during a specific season, or those that played on a specific team during a specific season. Then, select the number of questions and hit "Start quiz." Locate the correct birth city for the player displayed.
@@ -122,7 +148,15 @@ const canHover = window.matchMedia('(hover: hover)').matches;
 const introEl = document.getElementById('intro');
 const modeTeamsBtn = document.getElementById('mode-teams');
 const modeRostersBtn = document.getElementById('mode-rosters');
+const modePlayerBtn = document.getElementById('mode-player');
+const modeNationalityBtn = document.getElementById('mode-nationality');
 const modeQuizBtn = document.getElementById('mode-quiz');
+const nationalityLabel = document.getElementById('nationality-label');
+const nationalitySelect = document.getElementById('nationality-select');
+const playerSearchControl = document.getElementById('player-search-control');
+const playerSearchInput = document.getElementById('player-search-input');
+const playerSearchBtn = document.getElementById('player-search-btn');
+const playerPanel = document.getElementById('player-panel');
 const seasonControl = document.getElementById('season-label');
 const seasonSelect = document.getElementById('season-select');
 const teamSelect = document.getElementById('team-select');
@@ -137,8 +171,13 @@ const quizStartBtn = document.getElementById('quiz-start-btn');
 const quizPanel = document.getElementById('quiz-panel');
 const statusEl = document.getElementById('status');
 
-let mode = 'teams';          // 'teams' | 'rosters' | 'quiz'
+let mode = 'teams';          // 'teams' | 'rosters' | 'player' | 'nationality' | 'quiz'
 let teams = [];              // teams for the selected season
+let teamsSeason = null;          // season the teams list was loaded for
+let nationalitiesSeason = null;  // season the nationality list was loaded for
+let playerResults = null;        // last player search results (null = no search yet)
+let selectedPlayer = null;       // last player data returned by /api/map/player/<id>
+let playerSearchCounter = 0;     // ignores out-of-order search responses
 let requestCounter = 0;      // used to ignore responses that arrive out of order
 
 // Quiz state. null when no quiz is running. phase is one of
@@ -257,7 +296,115 @@ function drawRoster(data) {
   }
 }
 
-// Redraws the Teams or Roster view. Quiz mode draws its own map, so
+// One marker per birth city, with the players born there in the
+// popup/tooltip. Shared by the nationality map (the roster map has its
+// own copy because it also draws the team logo).
+function drawNationality(data) {
+  drawLayer.clearLayers();
+
+  const cluster = L.markerClusterGroup();
+  data.cities.forEach((entry) => {
+    const listHtml = entry.players.map((p) => `<li>${escapeHtml(p)}</li>`).join('');
+    const details = `<div class="popup-title">${escapeHtml(entry.city)}</div><ul class="popup-players">${listHtml}</ul>`;
+    const marker = L.marker(entry.coordinates).bindPopup(details);
+    bindHoverTooltip(marker, details);
+    cluster.addLayer(marker);
+  });
+  drawLayer.addLayer(cluster);
+
+  if (data.cities.length === 0) {
+    setStatus(`No ${data.nationality} players found for ${seasonLabel(data.season)}.`);
+    return;
+  }
+  map.fitBounds(L.latLngBounds(data.cities.map((c) => c.coordinates)), { padding: [30, 30], maxZoom: 6 });
+  setStatus(
+    `${data.nationality}, ${seasonLabel(data.season)}: ${data.player_count} players from ${data.cities.length} hometowns.`
+  );
+}
+
+// Draws the hometown of the selected player and opens its popup.
+function drawPlayer(data) {
+  drawLayer.clearLayers();
+  const { player, hometown } = data;
+
+  const place = hometown.country ? `${hometown.city}, ${hometown.country}` : hometown.city;
+  const details = `<div class="popup-title">${escapeHtml(player.name)}</div>${escapeHtml(place)}`;
+  const marker = L.marker(hometown.coordinates, { title: player.name }).bindPopup(details);
+  bindHoverTooltip(marker, details);
+  drawLayer.addLayer(marker);
+
+  map.setView(hometown.coordinates, 6);
+  marker.openPopup();
+  setStatus(`${player.name} was born in ${place}.`);
+}
+
+function renderPlayerPanel() {
+  if (mode !== 'player' || playerResults === null) {
+    playerPanel.hidden = true;
+    playerPanel.innerHTML = '';
+    return;
+  }
+  playerPanel.hidden = false;
+
+  if (playerResults.length === 0) {
+    playerPanel.innerHTML = '<p class="quiz-hint">No players found. Try a different spelling.</p>';
+    return;
+  }
+
+  playerPanel.innerHTML = '<div class="autofill-list"></div>';
+  const list = playerPanel.firstChild;
+  playerResults.forEach((p) => {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.className = 'autofill-list-item';
+    const primary = document.createElement('div');
+    primary.className = 'primary';
+    primary.textContent = `${p.first_name} ${p.last_name}`;
+    const secondary = document.createElement('div');
+    secondary.className = 'secondary';
+    secondary.textContent = [p.position, p.team].filter(Boolean).join(' \u00b7 ');
+    item.append(primary, secondary);
+    item.addEventListener('click', () => selectPlayer(p.id));
+    list.appendChild(item);
+  });
+}
+
+async function searchPlayers() {
+  const query = playerSearchInput.value.trim();
+  if (query.length < 2) {
+    setStatus('Type at least two characters of a player name.');
+    return;
+  }
+
+  const mySearch = ++playerSearchCounter;
+  setStatus('Searching...');
+  try {
+    const data = await getJson(`/api/map/players/search?q=${encodeURIComponent(query)}`);
+    if (mySearch !== playerSearchCounter || mode !== 'player') return;
+    playerResults = data.players;
+    renderPlayerPanel();
+    setStatus(playerResults.length === 0 ? '' : 'Choose a player from the list.');
+  } catch (err) {
+    if (mySearch !== playerSearchCounter) return;
+    setStatus(err.message, true);
+  }
+}
+
+async function selectPlayer(playerId) {
+  const myRequest = ++requestCounter;
+  setStatus('Loading player...');
+  try {
+    const data = await getJson(`/api/map/player/${encodeURIComponent(playerId)}`);
+    if (myRequest !== requestCounter || mode !== 'player') return;
+    selectedPlayer = data;
+    drawPlayer(data);
+  } catch (err) {
+    if (myRequest !== requestCounter) return;
+    setStatus(err.message, true);
+  }
+}
+
+// Redraws the Teams, Roster, Player or Nationality view. Quiz mode draws its own map, so
 // there is nothing to refresh there.
 async function refresh() {
   if (mode === 'quiz') return;
@@ -266,6 +413,37 @@ async function refresh() {
 
   if (mode === 'teams') {
     drawTeams();
+    return;
+  }
+
+  if (mode === 'player') {
+    drawLayer.clearLayers();
+    if (selectedPlayer) drawPlayer(selectedPlayer);
+    else setStatus('Search for a player by name.');
+    return;
+  }
+
+  if (mode === 'nationality') {
+    const nationality = nationalitySelect.value;
+    const natSeason = seasonSelect.value;
+    if (!nationality || !natSeason) {
+      drawLayer.clearLayers();
+      setStatus(natSeason ? 'No players found for that season.' : 'Choose a season and a nationality.');
+      return;
+    }
+
+    setStatus('Loading players...');
+    try {
+      const data = await getJson(
+        `/api/map/nationality?nationality=${encodeURIComponent(nationality)}&season=${encodeURIComponent(natSeason)}`
+      );
+      if (myRequest !== requestCounter) return;
+      drawNationality(data);
+    } catch (err) {
+      if (myRequest !== requestCounter) return;
+      drawLayer.clearLayers();
+      setStatus(err.message, true);
+    }
     return;
   }
 
@@ -307,6 +485,7 @@ async function loadTeamsForSeason() {
     setStatus(err.message, true);
   }
 
+  teamsSeason = season;
   teamSelect.innerHTML = '';
   teams.forEach((team) => {
     const option = document.createElement('option');
@@ -319,6 +498,52 @@ async function loadTeamsForSeason() {
   teamSelect.disabled = teams.length === 0;
 
   await refresh();
+}
+
+// Fills the nationality dropdown with the nationalities active in the
+// selected season, then redraws.
+async function loadNationalitiesForSeason() {
+  const season = seasonSelect.value;
+  const previous = nationalitySelect.value;
+  let nationalities = [];
+
+  setStatus('Loading nationalities...');
+  nationalitySelect.disabled = true;
+  try {
+    const data = await getJson(`/api/map/nationalities?season=${encodeURIComponent(season)}`);
+    if (season !== seasonSelect.value) return; // season changed again while loading
+    nationalities = data.nationalities;
+    nationalitiesSeason = season;
+  } catch (err) {
+    drawLayer.clearLayers();
+    setStatus(err.message, true);
+  }
+
+  nationalitySelect.innerHTML = '';
+  nationalities.forEach((nationality) => {
+    const option = document.createElement('option');
+    option.value = nationality;
+    option.textContent = nationality;
+    nationalitySelect.appendChild(option);
+  });
+  // Keep the same nationality across seasons when it still exists.
+  if (nationalities.includes(previous)) nationalitySelect.value = previous;
+  nationalitySelect.disabled = nationalities.length === 0;
+
+  await refresh();
+}
+
+// Loads whatever list the current mode needs for the selected season
+// (the lists are only reloaded when the season changed in another
+// mode), then draws.
+function loadForMode() {
+  const season = seasonSelect.value;
+  if (mode === 'nationality') {
+    if (nationalitiesSeason !== season) return loadNationalitiesForSeason();
+  } else if (mode === 'teams' || mode === 'rosters') {
+    if (teamsSeason !== season) return loadTeamsForSeason();
+  }
+  return refresh();
 }
 
 /* ------------------------------------------------------------------
@@ -729,13 +954,20 @@ function setMode(newMode) {
 
   modeTeamsBtn.classList.toggle('active', mode === 'teams');
   modeRostersBtn.classList.toggle('active', mode === 'rosters');
+  modePlayerBtn.classList.toggle('active', mode === 'player');
+  modeNationalityBtn.classList.toggle('active', mode === 'nationality');
   modeQuizBtn.classList.toggle('active', isQuiz);
   modeTeamsBtn.setAttribute('aria-pressed', String(mode === 'teams'));
   modeRostersBtn.setAttribute('aria-pressed', String(mode === 'rosters'));
+  modePlayerBtn.setAttribute('aria-pressed', String(mode === 'player'));
+  modeNationalityBtn.setAttribute('aria-pressed', String(mode === 'nationality'));
   modeQuizBtn.setAttribute('aria-pressed', String(isQuiz));
 
-  seasonControl.hidden = isQuiz;
+  seasonControl.hidden = isQuiz || mode === 'player';
   teamLabel.hidden = mode !== 'rosters';
+  nationalityLabel.hidden = mode !== 'nationality';
+  playerSearchControl.hidden = mode !== 'player';
+  renderPlayerPanel();
   quizSeasonControl.hidden = !isQuiz;
   quizTeamControl.hidden = !isQuiz;
   quizCountControl.hidden = !isQuiz;
@@ -745,19 +977,26 @@ function setMode(newMode) {
   if (isQuiz) {
     setStatus('Choose a season and team, or leave both on "Any", then press "Start quiz".');
   } else {
-    refresh();
+    loadForMode();
   }
 }
 
 modeTeamsBtn.addEventListener('click', () => setMode('teams'));
 modeRostersBtn.addEventListener('click', () => setMode('rosters'));
+modePlayerBtn.addEventListener('click', () => setMode('player'));
+modeNationalityBtn.addEventListener('click', () => setMode('nationality'));
 modeQuizBtn.addEventListener('click', () => setMode('quiz'));
 quizSeasonSelect.addEventListener('change', loadQuizTeams);
 quizTeamSelect.addEventListener('change', loadQuizSeasons);
 quizStartBtn.addEventListener('click', startQuiz);
 
-seasonSelect.addEventListener('change', loadTeamsForSeason);
+seasonSelect.addEventListener('change', loadForMode);
 teamSelect.addEventListener('change', refresh);
+nationalitySelect.addEventListener('change', refresh);
+playerSearchBtn.addEventListener('click', searchPlayers);
+playerSearchInput.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') searchPlayers();
+});
 
 async function init() {
   try {

@@ -373,3 +373,201 @@ def map_quiz():
         conn.close()
 
     return jsonify({"questions": questions})
+
+
+# ----------------------------------------------------------------------
+# Player and nationality maps
+# ----------------------------------------------------------------------
+
+PLAYER_SEARCH_LIMIT = 20
+
+
+def _like_pattern(text):
+    """Contains-match pattern for ILIKE, with % and _ typed by the person taken literally."""
+    escaped = text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
+@map_bp.route("/api/map/players/search", methods=["GET"])
+def map_player_search():
+    """
+    Find players by name for the "Player" map. Same idea as
+    /api/players/search in app.py (accent-insensitive contains-match,
+    at least two characters, at most 20 results), except that the
+    requirement is not "has a usable contract" but "has a birthplace we
+    can put on the map".
+    """
+    query = request.args.get("q", "").strip()
+    if len(query) < 2:
+        return jsonify({"players": []})
+
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT p.id, p.first_name, p.last_name, p.position,
+                   COALESCE(sk.team, gk.team) AS team
+            FROM players p
+            JOIN cities c ON c.name_NHL_API = p.birth_city
+            LEFT JOIN LATERAL (
+                SELECT team FROM skater_season_stats
+                WHERE playerid = p.id AND situation = 'all' AND phase = 'regular'
+                ORDER BY season DESC
+                LIMIT 1
+            ) sk ON true
+            LEFT JOIN LATERAL (
+                SELECT team FROM goalie_season_stats
+                WHERE playerid = p.id AND situation = 'all' AND phase = 'regular'
+                ORDER BY season DESC
+                LIMIT 1
+            ) gk ON true
+            WHERE unaccent(p.first_name || ' ' || p.last_name) ILIKE unaccent(%s)
+              AND c.latitude IS NOT NULL
+              AND c.longitude IS NOT NULL
+            ORDER BY p.last_name, p.first_name
+            LIMIT %s
+            """,
+            (_like_pattern(query), PLAYER_SEARCH_LIMIT),
+        )
+        rows = cur.fetchall()
+    finally:
+        conn.close()
+
+    return jsonify({
+        "players": [
+            {
+                "id": pid,
+                "first_name": first,
+                "last_name": last,
+                "position": position,
+                "team": team,
+            }
+            for pid, first, last, position, team in rows
+        ]
+    })
+
+
+@map_bp.route("/api/map/player/<int:player_id>", methods=["GET"])
+def map_player(player_id):
+    """One player and his birthplace, for the "Player" map."""
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT p.id, p.first_name, p.last_name, p.position, p.nationality,
+                   c.name_english, c.state_code, c.country,
+                   c.latitude, c.longitude
+            FROM players p
+            JOIN cities c ON c.name_NHL_API = p.birth_city
+            WHERE p.id = %s
+            """,
+            (player_id,),
+        )
+        row = cur.fetchone()
+    finally:
+        conn.close()
+
+    if row is None or row[8] is None or row[9] is None:
+        return jsonify({"error": "No hometown on record for that player."}), 404
+
+    (pid, first, last, position, nationality,
+     city, state, country, latitude, longitude) = row
+
+    return jsonify({
+        "player": {
+            "id": pid,
+            "name": f"{first} {last}",
+            "position": position,
+            "nationality": nationality,
+        },
+        "hometown": {
+            "city": _city_key(city, state),
+            "country": country,
+            "coordinates": [round(float(latitude), 5), round(float(longitude), 5)],
+        },
+    })
+
+
+@map_bp.route("/api/map/nationalities", methods=["GET"])
+def map_nationalities():
+    """
+    Nationalities that have at least one player on a roster. With the
+    optional season parameter, only nationalities that were active in
+    that season are returned, which fills the nationality dropdown.
+    """
+    season = request.args.get("season", type=int)
+
+    season_filter = ""
+    params = ()
+    if season is not None:
+        season_filter = "AND r.season = %s"
+        params = (season,)
+
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            f"""
+            SELECT DISTINCT p.nationality
+            FROM roster r
+            JOIN players p ON p.id = r.player_id
+            WHERE p.nationality IS NOT NULL AND p.nationality <> ''
+              {season_filter}
+            ORDER BY p.nationality
+            """,
+            params,
+        )
+        nationalities = [row[0] for row in cur.fetchall()]
+    finally:
+        conn.close()
+
+    return jsonify({"season": season, "nationalities": nationalities})
+
+
+@map_bp.route("/api/map/nationality", methods=["GET"])
+def map_nationality():
+    """
+    Every player of one nationality who was active in one season,
+    grouped by birthplace exactly like the roster map. "Active" means
+    the player is on a roster that season (see the roster view), so the
+    same rule as the Roster map applies: at least one game played, and
+    each player appears once.
+    """
+    nationality = request.args.get("nationality", "").strip()
+    season = request.args.get("season", type=int)
+
+    if not nationality or len(nationality) > 50 or season is None:
+        return jsonify({"error": "nationality and season query parameters are required."}), 400
+
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT DISTINCT r.player_id,
+                   r.player_first_name, r.player_last_name,
+                   r.city_name_english, r.city_state_code,
+                   r.city_latitude, r.city_longitude
+            FROM roster r
+            JOIN players p ON p.id = r.player_id
+            WHERE p.nationality = %s AND r.season = %s
+            ORDER BY r.player_last_name, r.player_first_name
+            """,
+            (nationality, season),
+        )
+        # Drop player_id; _group_roster_by_city wants the six roster columns.
+        roster_rows = [row[1:] for row in cur.fetchall()]
+    finally:
+        conn.close()
+
+    cities, player_count = _group_roster_by_city(roster_rows)
+
+    return jsonify({
+        "nationality": nationality,
+        "season": season,
+        "cities": cities,
+        "player_count": player_count,
+        "total_players": len(roster_rows),
+    })
