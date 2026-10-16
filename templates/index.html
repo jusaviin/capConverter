@@ -7,7 +7,7 @@
 {% from '_nav.html' import nav_styles, site_nav, site_footer %}
 {{ nav_styles() }}
 </head>
-<body>
+<body class="converter-page">
 
 <div class="top-bar">
 {{ site_nav('converter') }}
@@ -268,6 +268,25 @@ The full calculation:
 // moment this tab is closed or reloaded.
 const VISIT_SESSION_ID = {{ session_id | tojson }};
 
+// Fetch JSON consistently: reject HTTP errors and malformed JSON with
+// an Error message callers can show or handle in their own UI.
+async function fetchJson(url, options) {
+  const response = await fetch(url, options);
+  let data;
+
+  try {
+    data = await response.json();
+  } catch {
+    throw new Error('The server returned an invalid response.');
+  }
+
+  if (!response.ok) {
+    throw new Error(data.error || `Request failed (${response.status}).`);
+  }
+
+  return data;
+}
+
 const form = document.getElementById('cap-form');
 const resultBox = document.getElementById('result');
 const errorBox = document.getElementById('error');
@@ -428,8 +447,7 @@ function constrainLengthToStartYears() {
 }
 
 async function loadSalaryCapTable() {
-  const res = await fetch('/api/salary-cap');
-  const data = await res.json();
+  const data = await fetchJson('/api/salary-cap');
 
   renderCapTable(data);
 
@@ -484,8 +502,15 @@ async function searchPlayers() {
     return;
   }
 
-  const res = await fetch(`/api/players/search?q=${encodeURIComponent(query)}`);
-  const data = await res.json();
+  let data;
+  try {
+    data = await fetchJson(`/api/players/search?q=${encodeURIComponent(query)}`);
+  } catch (err) {
+    if (requestId === searchRequestId) {
+      playerSearchHint.textContent = err.message;
+    }
+    return;
+  }
 
   // While typing, an earlier (slower) request can resolve after a
   // later (faster) one. If that's happened, this response is stale
@@ -504,8 +529,8 @@ async function searchPlayers() {
     item.type = 'button';
     item.className = 'autofill-list-item';
     item.innerHTML = `
-      <div class="primary">${player.first_name} ${player.last_name}</div>
-      <div class="secondary">${player.team ? `${player.team} &middot; ` : ''}${player.position || 'Unknown position'}</div>
+      <div class="primary">${escapeHtml(player.first_name)} ${escapeHtml(player.last_name)}</div>
+      <div class="secondary">${player.team ? `${escapeHtml(player.team)} &middot; ` : ''}${escapeHtml(player.position || 'Unknown position')}</div>
     `;
     item.addEventListener('click', () => showPlayerContracts(player));
     playerResultsList.appendChild(item);
@@ -516,10 +541,16 @@ async function showPlayerContracts(player) {
   autofillWarning.style.display = 'none';
   contractResultsList.innerHTML = '';
   const teamAndPosition = [player.team, player.position].filter(Boolean).join(' \u00b7 ');
-  autofillSelectedPlayer.textContent = `${player.first_name} ${player.last_name}${teamAndPosition ? ` (${teamAndPosition})` : ''}`;
+  autofillSelectedPlayer.textContent = `${escapeHtml(player.first_name)} ${escapeHtml(player.last_name)}${teamAndPosition ? ` (${teamAndPosition})` : ''}`;
 
-  const res = await fetch(`/api/players/${player.id}/contracts`);
-  const data = await res.json();
+  let data;
+  try {
+    data = await fetchJson(`/api/players/${player.id}/contracts`);
+  } catch (err) {
+    autofillWarning.textContent = err.message;
+    autofillWarning.style.display = 'block';
+    return;
+  }
 
   if (data.contracts.length === 0) {
     contractResultsList.innerHTML = '<p class="autofill-hint">No usable contracts found for this player.</p>';
@@ -530,9 +561,9 @@ async function showPlayerContracts(player) {
       item.className = 'autofill-list-item';
       item.innerHTML = `
         <div class="primary">${seasonLabel(contract.start_season)} to ${seasonLabel(contract.end_season)} (${contract.num_years} season${contract.num_years === 1 ? '' : 's'})</div>
-        <div class="secondary">${contract.type}${contract.team ? ` &middot; ${contract.team}` : ''} &middot; ${formatNumber(contract.cap_hit_millions)} M$ cap hit</div>
+        <div class="secondary">${escapeHtml(contract.type)}${contract.team ? ` &middot; ${escapeHtml(contract.team)}` : ''} &middot; ${formatNumber(contract.cap_hit_millions)} M$ cap hit</div>
       `;
-      item.addEventListener('click', () => applyContractAutofill(contract, player.position, `${player.first_name} ${player.last_name}`));
+      item.addEventListener('click', () => applyContractAutofill(contract, player.position, `${escapeHtml(player.first_name)} ${escapeHtml(player.last_name)}`));
       contractResultsList.appendChild(item);
     });
   }
@@ -676,8 +707,7 @@ function renderFullCapTable(payload) {
 
 capTableBtn.addEventListener('click', async () => {
   captableOverlay.classList.add('open');
-  const res = await fetch('/api/salary-cap');
-  const data = await res.json();
+  const data = await fetchJson('/api/salary-cap');
   renderFullCapTable(data);
 });
 
@@ -717,16 +747,11 @@ applyPercentageBtn.addEventListener('click', async () => {
   }
 
   try {
-    const res = await fetch('/api/salary-cap/percentage', {
+    const data = await fetchJson('/api/salary-cap/percentage', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ percentage }),
     });
-    const data = await res.json();
-
-    if (!res.ok) {
-      throw new Error(data.error || 'Something went wrong.');
-    }
 
     // Save newly calculated projected years into client memory state
     currentOverrides = {};
@@ -773,39 +798,52 @@ function getPositionCategory(pos) {
   return null;
 }
 
-function updatePositionFilterButtons() {
-  const btnForwards = document.getElementById('filter-forwards');
-  const btnDefenders = document.getElementById('filter-defenders');
-  const btnGoalies = document.getElementById('filter-goalies');
+// Bind the shared position-filter button behavior while leaving each
+// section's selected state and reload behavior independent.
+function bindPositionFilterButtons(buttonIds, getActivePosition, setActivePosition, onChange) {
+  const buttons = Object.fromEntries(
+    Object.entries(buttonIds).map(([category, id]) => [category, document.getElementById(id)])
+  );
 
-  btnForwards.classList.toggle('active', activePositionFilter === 'forwards');
-  btnDefenders.classList.toggle('active', activePositionFilter === 'defenders');
-  btnGoalies.classList.toggle('active', activePositionFilter === 'goalies');
+  function updateButtons() {
+    Object.entries(buttons).forEach(([category, button]) => {
+      button.classList.toggle('active', getActivePosition() === category);
+    });
+  }
+
+  Object.entries(buttons).forEach(([category, button]) => {
+    button.addEventListener('click', () => {
+      setActivePosition(getActivePosition() === category ? null : category);
+      updateButtons();
+      onChange();
+    });
+  });
+
+  updateButtons();
+  return updateButtons;
 }
 
-function handlePositionFilterClick(category) {
-  if (activePositionFilter === category) {
-    activePositionFilter = null;
-  } else {
-    activePositionFilter = category;
+const updatePositionFilterButtons = bindPositionFilterButtons(
+  {
+    forwards: 'filter-forwards',
+    defenders: 'filter-defenders',
+    goalies: 'filter-goalies',
+  },
+  () => activePositionFilter,
+  (category) => { activePositionFilter = category; },
+  () => {
+    if (lastComparableParams) {
+      loadComparableContracts(
+        lastComparableParams.season,
+        lastComparableParams.capHitMillions,
+        lastComparableParams.contractStartYear,
+        lastComparableParams.numYears,
+        lastComparableParams.originalCapHit,
+        lastComparableParams.excludeContractId
+      );
+    }
   }
-  updatePositionFilterButtons();
-
-  if (lastComparableParams) {
-    loadComparableContracts(
-      lastComparableParams.season,
-      lastComparableParams.capHitMillions,
-      lastComparableParams.contractStartYear,
-      lastComparableParams.numYears,
-      lastComparableParams.originalCapHit,
-      lastComparableParams.excludeContractId
-    );
-  }
-}
-
-document.getElementById('filter-forwards').addEventListener('click', () => handlePositionFilterClick('forwards'));
-document.getElementById('filter-defenders').addEventListener('click', () => handlePositionFilterClick('defenders'));
-document.getElementById('filter-goalies').addEventListener('click', () => handlePositionFilterClick('goalies'));
+);
 
 async function loadComparableContracts(season, capHitMillions, contractStartYear, numYears, originalCapHit, excludeContractId) {
   const overridesParam = encodeURIComponent(JSON.stringify(currentOverrides));
@@ -817,10 +855,12 @@ async function loadComparableContracts(season, capHitMillions, contractStartYear
     url += `&position_group=${encodeURIComponent(activePositionFilter)}`;
   }
     
-  const res = await fetch(url);
-  if (!res.ok) return;
-    
-  comparablesData = await res.json();
+  try {
+    comparablesData = await fetchJson(url);
+  } catch (err) {
+    console.error(err);
+    return;
+  }
   renderComparables();
   document.getElementById('comparables-section').style.display = 'block';
 }
@@ -846,10 +886,10 @@ function renderComparables() {
             
     item.innerHTML = `
       <div class="primary">
-        <span>${row.rank != null ? `<span class="comparable-rank">#${row.rank}</span> ` : ''}${row.player_name}${row.position ? ` &middot; ${row.position}` : ''}</span>
+        <span>${row.rank != null ? `<span class="comparable-rank">#${row.rank}</span> ` : ''}${escapeHtml(row.player_name)}${row.position ? ` &middot; ${escapeHtml(row.position)}` : ''}</span>
         <span>${displayValue}</span>
       </div>
-      <div class="secondary">${row.team ? `${row.team} &middot; ` : ''}${row.type} &middot; ${seasonLabel(row.start_season)} to ${seasonLabel(row.end_season)}</div>
+      <div class="secondary">${row.team ? `${escapeHtml(row.team)} &middot; ` : ''}${escapeHtml(row.type)} &middot; ${seasonLabel(row.start_season)} to ${seasonLabel(row.end_season)}</div>
     `;
     list.appendChild(item);
   });
@@ -890,16 +930,11 @@ form.addEventListener('submit', async (e) => {
   };
         
   try {
-    const res = await fetch('/api/convert', {
+    const data = await fetchJson('/api/convert', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    const data = await res.json();
-            
-    if (!res.ok) {
-      throw new Error(data.error || 'Something went wrong.');
-    }
             
     const convertedMillions = data.converted_cap_hit / 1_000_000;
     resultBox.innerHTML = `
@@ -1064,9 +1099,7 @@ async function fetchListPage(page) {
   }
 
   try {
-    const res = await fetch(`/api/contract-list?${params.toString()}`);
-    if (!res.ok) throw new Error('request failed');
-    const data = await res.json();
+    const data = await fetchJson(`/api/contract-list?${params.toString()}`);
     if (gen !== listState.gen) return;
 
     listState.pages.set(page, data.rows);
@@ -1166,21 +1199,16 @@ listSeasonSelect.addEventListener('change', () => {
   });
 });
 
-const listFilterButtons = {
-  forwards: document.getElementById('list-filter-forwards'),
-  defenders: document.getElementById('list-filter-defenders'),
-  goalies: document.getElementById('list-filter-goalies'),
-};
-Object.entries(listFilterButtons).forEach(([category, button]) => {
-  button.addEventListener('click', () => {
-    // Clicking the active filter turns it off again (= all positions).
-    listState.position = listState.position === category ? null : category;
-    Object.entries(listFilterButtons).forEach(([c, b]) => {
-      b.classList.toggle('active', listState.position === c);
-    });
-    reloadContractList();
-  });
-});
+bindPositionFilterButtons(
+  {
+    forwards: 'list-filter-forwards',
+    defenders: 'list-filter-defenders',
+    goalies: 'list-filter-goalies',
+  },
+  () => listState.position,
+  (category) => { listState.position = category; },
+  reloadContractList
+);
 </script>
 
 </body>

@@ -38,3 +38,10 @@ http://127.0.0.1:5000  # debug
 localhost:8000         # production
 ```
 
+## Unit tests
+
+There are some unit tests for sanity purposes. If you are afraid you are going to break something, good to run the tests using command
+
+```
+python -m unittest discover -s tests -v
+```

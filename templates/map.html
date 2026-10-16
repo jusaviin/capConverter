@@ -11,7 +11,7 @@
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.css">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.Default.css">
 </head>
-<body>
+<body class="map-page">
 
 <div class="top-bar">
 {{ site_nav('map') }}
@@ -232,6 +232,18 @@ function bindHoverTooltip(marker, content) {
   });
 }
 
+// Shared marker for a hometown with its players in the popup/tooltip.
+// Used by roster and nationality views; quiz markers have different behavior.
+function cityMarker(entry) {
+  const listHtml = entry.players.map((p) => `<li>${escapeHtml(p)}</li>`).join('');
+  // Same content for hover (tooltip) and click/tap (popup). Only one
+  // of the two is ever visible at a time.
+  const details = `<div class="popup-title">${escapeHtml(entry.city)}</div><ul class="popup-players">${listHtml}</ul>`;
+  const marker = L.marker(entry.coordinates).bindPopup(details);
+  bindHoverTooltip(marker, details);
+  return marker;
+}
+
 function teamMarker(team, size) {
   const options = { title: team.name };
   if (team.logo) {
@@ -270,13 +282,7 @@ function drawRoster(data) {
   const cluster = L.markerClusterGroup();
 
   data.cities.forEach((entry) => {
-    const listHtml = entry.players.map((p) => `<li>${escapeHtml(p)}</li>`).join('');
-    // Same content for hover (tooltip) and click/tap (popup). Only one
-    // of the two is ever visible at a time.
-    const details = `<div class="popup-title">${escapeHtml(entry.city)}</div><ul class="popup-players">${listHtml}</ul>`;
-    const marker = L.marker(entry.coordinates).bindPopup(details);
-    bindHoverTooltip(marker, details);
-    cluster.addLayer(marker);
+    cluster.addLayer(cityMarker(entry));
     points.push(entry.coordinates);
   });
 
@@ -304,11 +310,7 @@ function drawNationality(data) {
 
   const cluster = L.markerClusterGroup();
   data.cities.forEach((entry) => {
-    const listHtml = entry.players.map((p) => `<li>${escapeHtml(p)}</li>`).join('');
-    const details = `<div class="popup-title">${escapeHtml(entry.city)}</div><ul class="popup-players">${listHtml}</ul>`;
-    const marker = L.marker(entry.coordinates).bindPopup(details);
-    bindHoverTooltip(marker, details);
-    cluster.addLayer(marker);
+    cluster.addLayer(cityMarker(entry));
   });
   drawLayer.addLayer(cluster);
 

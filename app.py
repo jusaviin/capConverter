@@ -8,6 +8,7 @@ from flask import Flask, render_template, request, jsonify
 from salary_cap import salary_cap_finder
 from database_helper import get_connection
 from map_routes import map_bp
+from contract_calculations import average_contract_cap_percentage, convert_cap_hit
 
 app = Flask(__name__)
 app.register_blueprint(map_bp)
@@ -114,52 +115,6 @@ USABLE_CONTRACT_SQL = """
 # expects (a handful of numbers, at most 8 override entries) is well
 # under 1KB -- this just closes off oversized-body abuse.
 app.config["MAX_CONTENT_LENGTH"] = 64 * 1024
-
-def convert_cap_hit(cap_hit, num_years, contract_start_year, reference_start_year, cap_finder):
-    """
-    Convert a salary cap hit from its original contract context into
-    the equivalent value as if the contract had started in the
-    reference year.
-
-    We calculate the average cap hit over the duration of the contract
-    and adjust the value such that these fractions match. Salary caps
-    beyond the confirmed range come from cap_finder's projection,
-    which may include this user's own session-based overrides.
-    """
-
-    # The numbers get very big, so divide everything by 1000000 to avoid numerics errors
-    scale = 1000000
-
-    # First, calculate the average cap hit fraction of the original contract
-    average_cap_hit_fraction = 0
-    for year in range(contract_start_year, contract_start_year+num_years):
-        average_cap_hit_fraction = average_cap_hit_fraction + (cap_hit / cap_finder.get_salary_cap(year))
-
-    # We want to match this fraction starting from the reference year
-    # Reference number is b in ax = b calculation
-    reference_number = average_cap_hit_fraction
-    for year in range(reference_start_year, reference_start_year+num_years):
-        reference_number = reference_number * (cap_finder.get_salary_cap(year) / scale)
-
-    # We need sum of multiplications where one is missing
-    # Sum of multiplications is a in ax = b calculation
-    sum_of_multiplications = 0
-    for forbidden_year in range(reference_start_year, reference_start_year+num_years):
-        multiplication = 1
-        for year in range(reference_start_year, reference_start_year+num_years):
-            if year == forbidden_year:
-                continue
-            multiplication = multiplication * (cap_finder.get_salary_cap(year) / scale)
-        sum_of_multiplications = sum_of_multiplications + multiplication
-
-    # From these numbers, we can calculate x
-    adjusted = reference_number / sum_of_multiplications * scale
-    
-    # Calculate also the average cap percentage for the duration of the season
-    average_cap_percentage = (average_cap_hit_fraction / num_years) * 100
-    
-    return adjusted, average_cap_percentage
-
 
 def _salary_cap_table_response(cap_finder):
     """
@@ -339,13 +294,7 @@ def get_comparable_contracts():
     exclude_clause = " AND c.id != %(exclude_contract_id)s" if exclude_contract_id else ""
 
     position_group = request.args.get("position_group")
-    position_clause = ""
-    if position_group == "forwards":
-        position_clause = " AND p.position IN ('C', 'R', 'L')"
-    elif position_group == "defenders":
-        position_clause = " AND p.position = 'D'"
-    elif position_group == "goalies":
-        position_clause = " AND p.position = 'G'"
+    position_clause = _position_clause(position_group)
 
     # Parse custom overrides sent from frontend
     overrides_raw = request.args.get("overrides")
@@ -456,46 +405,18 @@ def get_comparable_contracts():
     finally:
         conn.close()
 
-    # Standard "competition" ranking (1, 2, 2, 4, ...): equal values share
-    # a rank, and the next distinct value's rank accounts for the ties
-    # above it. 1 always means the single highest value in the field.
-    def rank_by_value(id_value_pairs):
-        ranks = {}
-        previous_value = None
-        current_rank = 0
-        for position_index, (row_id, value) in enumerate(
-            sorted(id_value_pairs, key=lambda pair: pair[1], reverse=True), start=1
-        ):
-            if value != previous_value:
-                current_rank = position_index
-                previous_value = value
-            ranks[row_id] = current_rank
-        return ranks
-
     # Rank every contract active this season (matching the position
     # filter) by raw cap hit, so the 10 shown can carry their rank
     # among the full field, not just among themselves.
-    cap_hit_ranks = rank_by_value((row[0], row[4]) for row in candidates)
+    cap_hit_ranks = _competition_ranks((row[0], row[4]) for row in candidates)
 
     formatted_avg_percentage_rows = []
     for contract_id, first_name, last_name, position, cap_hit, start_season, end_season, contract_type, team in candidates:
-        duration = end_season - start_season + 1
-        if duration <= 0:
+        c_avg_cap_percentage = average_contract_cap_percentage(
+            cap_hit, start_season, end_season, cap_finder
+        )
+        if c_avg_cap_percentage is None:
             continue
-
-        fractions_sum = 0
-        valid = True
-        for yr in range(start_season, end_season + 1):
-            cap_val = cap_finder.get_salary_cap(yr)
-            if cap_val <= 0:
-                valid = False
-                break
-            fractions_sum += cap_hit / cap_val
-
-        if not valid:
-            continue
-
-        c_avg_cap_percentage = (fractions_sum / duration) * 100
         diff = abs(c_avg_cap_percentage - target_avg_cap_percentage)
 
         formatted_avg_percentage_rows.append({
@@ -514,7 +435,7 @@ def get_comparable_contracts():
     # Rank every contract with a valid average cap percentage (same
     # population as above) so the top 10 shown can carry their rank
     # among the full field.
-    avg_cap_percentage_ranks = rank_by_value(
+    avg_cap_percentage_ranks = _competition_ranks(
         (r["id"], r["avg_cap_percentage"]) for r in formatted_avg_percentage_rows
     )
 
@@ -619,6 +540,26 @@ def _position_clause(position_group):
     if position_group == "goalies":
         return " AND p.position = 'G'"
     return ""
+
+
+def _competition_ranks(id_value_pairs):
+    """Return standard competition ranks (1, 2, 2, 4, ...) by item ID.
+
+    Values are ranked highest-first. Equal values share a rank, and the
+    next distinct value's rank reflects the number of items ahead of it.
+    Sorting for display or pagination remains the caller's responsibility.
+    """
+    ranks = {}
+    previous_value = None
+    current_rank = 0
+    for position_index, (item_id, value) in enumerate(
+        sorted(id_value_pairs, key=lambda pair: pair[1], reverse=True), start=1
+    ):
+        if value != previous_value:
+            current_rank = position_index
+            previous_value = value
+        ranks[item_id] = current_rank
+    return ranks
 
 
 def _contract_list_row(contract_id, first_name, last_name, position, cap_hit,
@@ -750,39 +691,28 @@ def get_contract_list():
         entries = []
         for (contract_id, first_name, last_name, position, cap_hit,
              start_season, end_season, contract_type, team) in candidates:
-            duration = end_season - start_season + 1
-            if duration <= 0:
+            avg = average_contract_cap_percentage(
+                cap_hit, start_season, end_season, cap_finder
+            )
+            if avg is None:
                 continue
-
-            fractions_sum = 0
-            valid = True
-            for yr in range(start_season, end_season + 1):
-                cap_val = cap_finder.get_salary_cap(yr)
-                if cap_val <= 0:
-                    valid = False
-                    break
-                fractions_sum += cap_hit / cap_val
-            if not valid:
-                continue
-
-            avg = (fractions_sum / duration) * 100
             entries.append((contract_id, avg, first_name, last_name, position,
                             cap_hit, start_season, end_season, contract_type, team))
 
         # Highest first; contract id breaks ties so paging is stable.
         entries.sort(key=lambda e: (-e[1], e[0]))
 
-        # Same "competition" ranking (1, 2, 2, 4, ...) as the comparables.
-        ranked_rows = []
-        previous_avg = None
-        current_rank = 0
-        for index, e in enumerate(entries, start=1):
-            if e[1] != previous_avg:
-                current_rank = index
-                previous_avg = e[1]
-            ranked_rows.append(_contract_list_row(
-                e[0], e[2], e[3], e[4], e[5], e[6], e[7], e[8], e[9], current_rank, e[1]
-            ))
+        # Use the same competition-ranking rule as the comparables.
+        # Keep entries sorted by average (then contract ID) for stable paging;
+        # ranking itself is based only on the average value.
+        avg_ranks = _competition_ranks((e[0], e[1]) for e in entries)
+        ranked_rows = [
+            _contract_list_row(
+                e[0], e[2], e[3], e[4], e[5], e[6], e[7], e[8], e[9],
+                avg_ranks[e[0]], e[1]
+            )
+            for e in entries
+        ]
 
         if len(_contract_list_cache) >= CONTRACT_LIST_CACHE_MAX_ENTRIES:
             oldest_key = min(_contract_list_cache, key=lambda k: _contract_list_cache[k][0])

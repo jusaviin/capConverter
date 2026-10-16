@@ -583,11 +583,11 @@ footer a:hover {
    Map Page Styles (from map.html)
    ========================================================================== */
 
-.map-page body {
+body.map-page {
   max-width: 1000px;
 }
 @media (max-width: 600px) {
-  .map-page body { margin: 24px auto; }
+  body.map-page { margin: 24px auto; }
 }
 #intro.map-intro {
   max-width: 100%;
