@@ -605,9 +605,9 @@ footer a:hover {
 }
 .mode-toggle {
   display: flex;
+  flex-wrap: wrap;
   border: 1px solid #ccc;
   border-radius: 6px;
-  overflow: hidden;
 }
 .mode-toggle button {
   margin: 0;
@@ -619,6 +619,7 @@ footer a:hover {
   background: #fff;
   color: #444;
   cursor: pointer;
+  flex: 1 1 auto;
 }
 .mode-toggle button:hover { background: #f3f4f6; }
 .mode-toggle button.active {
