@@ -20,7 +20,7 @@
 <h1>NHL Salary Cap Hit Converter</h1>
 
 <p id="intro">
-  This tool converts an NHL player's salary cap hit into what it would be if the contract had started in a chosen reference season and the average cap hit percentage stayed the same.
+  This tool converts an NHL player's salary cap hit into what it would be if the contract had started in a chosen reference season and the average percentage taken from the salary cap stayed the same.
 </p>
 
 <div class="comparables-tabs view-switch" role="tablist" aria-label="Page mode">
@@ -78,9 +78,9 @@
 <div id="error"></div>
 
 <div class="comparables-section" id="comparables-section" style="display: none;">
-  <h2>Comparable cap hits that season</h2>
+  <h2 id="comparables-heading">Comparable cap hits in the reference season</h2>
   <div class="comparables-tabs">
-    <button type="button" class="comparables-tab active" id="tab-all-season" data-mode="all_season">Under contract that season</button>
+    <button type="button" class="comparables-tab active" id="tab-all-season" data-mode="all_season">Cap hit</button>
     <button type="button" class="comparables-tab" id="tab-avg-cap-percentage" data-mode="avg_cap_percentage">Average cap percentage</button>
   </div>
   <div class="comparables-filter-tabs">
@@ -125,7 +125,7 @@
   <details>
     <summary>Can you provide an example calculation?</summary>
     <p>
-      Certainly. The tool first calculates the average cap hit percentage for the duration of the original contract. It then calculates the amount of money the player would earn if the contract had started in the reference year assuming the player would earn the same average fraction of the cap hit throughout the contract period.
+      Certainly. The tool first calculates the average percentage taken from the salary cap for the duration of the original contract. It then calculates the amount of money the player would earn if the contract had started in the reference year assuming the player would earn the same average percentage of the salary cap throughout the contract period.
     </p>
     <pre>
 Cap hit:                 5.0 M$
@@ -861,6 +861,8 @@ async function loadComparableContracts(season, capHitMillions, contractStartYear
     console.error(err);
     return;
   }
+  document.getElementById('comparables-heading').textContent =
+    `Comparable cap hits in the ${seasonLabel(Number(season))} season`;
   renderComparables();
   document.getElementById('comparables-section').style.display = 'block';
 }
@@ -939,7 +941,7 @@ form.addEventListener('submit', async (e) => {
     const convertedMillions = data.converted_cap_hit / 1_000_000;
     resultBox.innerHTML = `
       <div><strong>Converted Cap Hit:</strong> ${formatNumber(convertedMillions)} M$</div>
-      <div style="margin-top: 4px; font-size: 0.95rem; color: #047857;"><strong>Average Cap Hit:</strong> ${formatNumber(data.average_cap_percentage)} %</div>
+      <div style="margin-top: 4px; font-size: 0.95rem; color: #047857;"><strong>Average Cap Percentage:</strong> ${formatNumber(data.average_cap_percentage)} %</div>
     `;
     resultBox.style.display = 'block';
 
